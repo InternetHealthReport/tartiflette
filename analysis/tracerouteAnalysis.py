@@ -10,9 +10,15 @@ import numpy as np
 import bisect
 import matplotlib.pylab as plt
 from collections import defaultdict
+from scipy import stats
+
+bins = [0.0]
+bins.extend(np.logspace(0,4,100))
+
 
 def isPrivateIP(ip):
     return IP(ip).iptype() == "PRIVATE"
+
 
 def loadData(path):
 
@@ -112,7 +118,6 @@ def dataModeling(g):
     """
     nbEdge = 0 
     totalEdge = float(len(g.edges()))
-    bins = np.logspace(0,4,100)
     pmfs = {} 
     for n0, n1, data in g.edges_iter(data=True):
         nbEdge+=1.0
@@ -126,25 +131,30 @@ def dataModeling(g):
     nx.set_edge_attributes(g, "pmf", pmfs)
 
 
-def testOneTrace(g, trace, edgeType=None):
+def testOneTrace(g, trace, probaMeasured, probaInfered):
 
-    proba = {}
-    bins = np.logspace(0,4,100)
+    if probaMeasured is None:
+        probaMeasured = defaultdict(list)
+    if probaInfered is None:
+        probaInfered = defaultdict(list)
 
     if trace["type"] != "traceroute":
         print "Not a traceroute!?"
 
     if "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
-        return proba
+        return probaMeasured, probaInfered 
 
     ipProbe = "probe_%s"  % trace["prb_id"]
     ip1 = None
     ip2 = None
     lastHop = max(trace["result"], key=lambda x:x['hop'])
     prevRtt = None 
+    prevRttMean = None
     rtt = None 
+    rttMean = None
 
     for hop in range(lastHop["hop"]+1):
+        rttList = []
         try:
             nextHop = next((item for item in trace["result"] if item["hop"] == hop), None)
             if nextHop is None:
@@ -152,74 +162,77 @@ def testOneTrace(g, trace, edgeType=None):
                 # TODO: clean that workaround results containing no IP, e.g.:
                 # {u'result': [{u'x': u'*'}, {u'x': u'*'}, {u'x': u'*'}], u'hop': 6}, 
 
-            if "result" in nextHop and "from" in nextHop["result"][0] and not isPrivateIP(nextHop["result"][0]["from"]):
+            if "result" in nextHop :
 
-                ip2 = nextHop["result"][0]["from"]
-                rtt = 3000.0
                 for res in nextHop["result"]:
-                # TODO check if the IP is the same for the 3 packets
-                    # if "from" in res and ip2 != res["from"]:
-                        # print "different IPs %s, %s" % (ip2, res["from"])
+                    if not "from" in res  or isPrivateIP(res["from"]):
+                        continue
+
+                    ip2 = res["from"]
+                    rtt = 3000.0
 
                     if "rtt" in res and res["rtt"] > 0.0:
-                        rtt = min(rtt, res["rtt"])
+                        rtt =  res["rtt"]
+                        rttList.append(rtt)
 
-                if rtt==3000.0:
-                    # All packets are lost?
-                    continue
-                assert rtt >= 0.0
+                    if rtt==3000.0:
+                        # All packets are lost?
+                        continue
+                    assert rtt >= 0.0
 
-                # probed path
-                if g.has_edge(ipProbe, ip2) and (edgeType is None or edgeType == g.edge[ipProbe][ip2]["type"]):
-                    proba[(ipProbe, ip2)] = g.edge[ipProbe][ip2]["pmf"][bisect.bisect(bins,rtt)]
+                    # measured path
+                    #if g.has_edge(ipProbe, ip2):
+                    probaMeasured[(ipProbe, ip2)].append(rtt)
+                    # probaMeasured[(ipProbe, ip2)].append(g.edge[ipProbe][ip2]["pmf"][bisect.bisect(bins,rtt)])
 
-                # Infered link
-                if g.has_edge(ip1, ip2):
-                    if not ip1 is None and (edgeType is None or edgeType == g.edge[ip1][ip2]["type"]):
-                        proba[(ip1,ip2)] = g.edge[ip1][ip2]["pmf"][bisect.bisect(bins,rtt - prevRtt)]
+                    # Infered rtt
+                    # if g.has_edge(ip1, ip2):
+                    if not ip1 is None and len(prevRttList):
+                        probaInfered[(ip1,ip2)].append(rtt-np.mean(prevRttList))
+                        # probaInfered[(ip1,ip2)].append(g.edge[ip1][ip2]["pmf"][bisect.bisect(bins,rtt - prevRtt)])
         finally:
             prevRtt = rtt
+            prevRttList = rttList
             ip1 = ip2
 
-    return proba
+    return probaMeasured, probaInfered
 
 
-def testDateRange(g,start = datetime(2015, 5, 12, 23, 45), 
-        end = datetime(2015, 5, 13, 23, 45), msmIDs = range(5001,5027), edgeType=None):
+def testDateRange(g,start = datetime(2015, 5, 10, 23, 45), 
+        end = datetime(2015, 5, 13, 23, 45), msmIDs = range(5001,5027)):
 
     timeWindow = timedelta(minutes=30)
-    res = {}
+    stats = {"measured":defaultdict(list), "infered": defaultdict(list)}
+    allProbaMeasured = defaultdict(list)
+    allProbaInfered = defaultdict(list)
 
-    for i, msmId in enumerate(msmIDs):
-        currDate = start
-        stats = defaultdict(list)
-        sys.stderr.write("\rTesting %02.2f%% (measurement id %s)" % (100.0*(1+i)/len(msmIDs), msmId) )
-        while currDate+timeWindow<end:
-            totalProb = [] 
+    currDate = start
+    while currDate+timeWindow<end:
+        probaMeasured = defaultdict(list)
+        probaInfered = defaultdict(list)
+        sys.stderr.write("\rTesting %s " % currDate)
 
-            if not os.path.exists("data/%s_msmId%s.json" % (currDate, msmId)):
+        for i, msmId in enumerate(msmIDs):
+
+            if not os.path.exists("../data/%s_msmId%s.json" % (currDate, msmId)):
                 currDate += timeWindow
                 continue
 
-            fi = open("data/%s_msmId%s.json" % (currDate, msmId) )
+            fi = open("../data/%s_msmId%s.json" % (currDate, msmId) )
             data = json.load(fi)
 
             for trace in data:
-                prob = testOneTrace(g,trace,edgeType)
-                totalProb.extend(prob.values())
+                probaMeasured, probaInfered = testOneTrace(g, trace, probaMeasured, probaInfered)
 
-            if len(totalProb):
-                stats["date"].append(currDate)
-                stats["mean"].append(np.mean(totalProb))
-                stats["median"].append(np.median(totalProb))
-                stats["std"].append(np.std(totalProb))
+        for k, v in probaMeasured.iteritems():
+            allProbaMeasured[k].append(np.mean(v))
+        for k, v in probaInfered.iteritems():
+            allProbaInfered[k].append(np.mean(v))
 
-            currDate += timeWindow
-
-        res[msmId] = stats 
+        currDate += timeWindow
     
     sys.stderr.write("\n")
-    return res
+    return stats, allProbaMeasured, allProbaInfered
 
 def plotTestDateRange(res):
 

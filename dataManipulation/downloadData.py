@@ -8,8 +8,8 @@ import json
 builtinIdv4 = range(5001,5027)
 
 # dates
-start = datetime(2015, 5, 12, 23, 45)
-end = datetime(2015, 5, 13, 23, 45)
+start = datetime(2015, 5, 10, 23, 45)
+end = datetime(2015, 5, 12, 23, 45)
 timeWindow = timedelta(minutes=30)
 
 errors = []
@@ -22,7 +22,7 @@ for msmId in builtinIdv4:
 
         try:
             print("%s:  measurement id %s" % (currDate, msmId) )
-            if os.path.exists("data/%s_msmId%s.json" % (currDate, msmId)):
+            if os.path.exists("../data/%s_msmId%s.json" % (currDate, msmId)):
                 continue
 
             kwargs = {
@@ -36,7 +36,7 @@ for msmId in builtinIdv4:
 
             if is_success:
                 # Output file
-                fi = open("data/%s_msmId%s.json" % (currDate, msmId) ,"w")
+                fi = open("../data/%s_msmId%s.json" % (currDate, msmId) ,"w")
                 print("Storing data for %s measurement id %s" % (currDate, msmId) )
                 json.dump(results, fi)
                 fi.close()
