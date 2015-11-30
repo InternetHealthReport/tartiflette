@@ -1,244 +1,178 @@
 import sys
-import networkx as nx
+import itertools
 from datetime import datetime
 from datetime import timedelta
+import time
 import os
 import json
-from IPy import IP
 import glob
 import numpy as np
-import bisect
-import matplotlib.pylab as plt
 from collections import defaultdict
 from scipy import stats
+from pymongo import MongoClient
+from multiprocessing import Process, JoinableQueue, Manager
+import tools
 
-bins = [0.0]
-bins.extend(np.logspace(0,4,100))
-
-
-def isPrivateIP(ip):
-    return IP(ip).iptype() == "PRIVATE"
-
-
-def loadData(path):
-
-    g = nx.Graph()
-    files = glob.glob(path)
-
-    for fileNb, filename in enumerate(files):
-        
-        if os.stat(filename).st_size > 8:
-            sys.stderr.write("\rLoading data %02.2f%% (%s)" % ((100.0*(1+fileNb))/len(files), filename))
-            fi = open(filename)
-            data = json.load(fi)
-            fi.close()
-
-            for trace in data:
-                if trace["type"] != "traceroute":
-                    print "Not a traceroute!?"
-
-                if "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
-                    continue
-
-                ipProbe = "probe_%s"  % trace["prb_id"]
-                ip1 = None
-                ip2 = None
-                lastHop = max(trace["result"], key=lambda x:x['hop'])
-                prevRtt = None 
-
-                # try:
-                    # if not isPrivateIP(trace["src_addr"]): 
-                        # ip1 = trace["src_addr"]
-                    # elif trace["from"] and not isPrivateIP(trace["from"]) :
-                        # ip1 = trace["from"]
-                    # else:
-                        # print("Warn: probe as no public IP!")
-                        # ip1 = "probe_%s"  % trace["prb_id"]
-
-                # except ValueError:
-                    # print trace
-                for hop in range(lastHop["hop"]+1):
-                    nextHop = next((item for item in trace["result"] if item["hop"] == hop), None)
-                    if nextHop is None:
-                        continue
-                        # TODO: clean that workaround results containing no IP, e.g.:
-                        # {u'result': [{u'x': u'*'}, {u'x': u'*'}, {u'x': u'*'}], u'hop': 6}, 
-
-                    if "result" in nextHop and "from" in nextHop["result"][0] and not isPrivateIP(nextHop["result"][0]["from"]):
-
-                        try:
-                            ip2 = nextHop["result"][0]["from"]
-                            rtt = 3000.0
-                            for res in nextHop["result"]:
-                            # TODO check if the IP is the same for the 3 packets
-                                # if "from" in res and ip2 != res["from"]:
-                                    # print "different IPs %s, %s" % (ip2, res["from"])
-
-                                if "rtt" in res and res["rtt"] > 0.0:
-                                    rtt = min(rtt, res["rtt"])
-
-                            if rtt==3000.0:
-                                # All packets are lost?
-                                continue
-                            assert rtt >= 0.0
-
-                            # probed path
-                            if not g.has_edge(ipProbe, ip2):
-                                g.add_edge(ipProbe, ip2, samples=[], type="measured")
-                            g.edge[ipProbe][ip2]["samples"].append(rtt)
-
-
-                            # Infered link
-                            if not ip1 is None:
-                                if not g.has_edge(ip1, ip2):
-                                    g.add_edge(ip1, ip2, samples=[], type="infered")
-                                g.edge[ip1][ip2]["samples"].append(rtt - prevRtt)
-
-
-                        except KeyError as e:
-                            print e
-                            print trace
-                            exit
-                            continue
-
-                        except AssertionError:
-                            print "rtt value = %s" % rtt
-                            print trace
-
-                        finally:
-                            prevRtt = rtt
-                            ip1 = ip2
-
-    sys.stderr.write("\n")
-    return g 
-
-
-def dataModeling(g):
-    """ Compute the probability mass functions for each edges of the given graph.
+def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
+    """Read a single traceroute instance and compute the corresponding 
+    measured and infered RTTs.
     """
-    nbEdge = 0 
-    totalEdge = float(len(g.edges()))
-    pmfs = {} 
-    for n0, n1, data in g.edges_iter(data=True):
-        nbEdge+=1.0
-        sys.stderr.write("\rData modeling %02.2f%%" % (100.0*(nbEdge+1)/totalEdge))
-        absValues = np.abs(data["samples"])
-        count = float(len(absValues))
-        if count:
-            pmfs[(n0,n1)] = np.histogram(absValues,bins)[0]/count
-
-    sys.stderr.write("\n")
-    nx.set_edge_attributes(g, "pmf", pmfs)
-
-
-def testOneTrace(g, trace, probaMeasured, probaInfered):
-
-    if probaMeasured is None:
-        probaMeasured = defaultdict(list)
-    if probaInfered is None:
-        probaInfered = defaultdict(list)
-
-    if trace["type"] != "traceroute":
-        print "Not a traceroute!?"
 
     if "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
-        return probaMeasured, probaInfered 
+        return measuredRtt, inferredRtt
 
     ipProbe = "probe_%s"  % trace["prb_id"]
     ip1 = None
     ip2 = None
-    lastHop = max(trace["result"], key=lambda x:x['hop'])
-    prevRtt = None 
-    prevRttMean = None
-    rtt = None 
-    rttMean = None
 
-    for hop in range(lastHop["hop"]+1):
-        rttList = []
+    for hopNb, hop in enumerate(trace["result"]):
+        # print "i=%s  and hop=%s" % (hopNb, hop)
+
         try:
-            nextHop = next((item for item in trace["result"] if item["hop"] == hop), None)
-            if nextHop is None:
-                continue
-                # TODO: clean that workaround results containing no IP, e.g.:
-                # {u'result': [{u'x': u'*'}, {u'x': u'*'}, {u'x': u'*'}], u'hop': 6}, 
+            # TODO: clean that workaround results containing no IP, e.g.:
+            # {u'result': [{u'x': u'*'}, {u'x': u'*'}, {u'x': u'*'}], u'hop': 6}, 
 
-            if "result" in nextHop :
+            if "result" in hop :
 
-                for res in nextHop["result"]:
-                    if not "from" in res  or isPrivateIP(res["from"]):
+                rttList = np.array([np.nan]*len(hop["result"])) 
+                for resNb, res in enumerate(hop["result"]):
+                    if not "from" in res  or tools.isPrivateIP(res["from"]) or not "rtt" in res or res["rtt"] <= 0.0:
                         continue
 
+                    # if hopNb+1!=hop["hop"]:
+                        # print trace
+                    assert hopNb+1==hop["hop"] or hop["hop"]==255 
                     ip2 = res["from"]
-                    rtt = 3000.0
-
-                    if "rtt" in res and res["rtt"] > 0.0:
-                        rtt =  res["rtt"]
-                        rttList.append(rtt)
-
-                    if rtt==3000.0:
-                        # All packets are lost?
-                        continue
-                    assert rtt >= 0.0
+                    rtt =  res["rtt"]
+                    rttList[resNb] = rtt
 
                     # measured path
-                    #if g.has_edge(ipProbe, ip2):
-                    probaMeasured[(ipProbe, ip2)].append(rtt)
-                    # probaMeasured[(ipProbe, ip2)].append(g.edge[ipProbe][ip2]["pmf"][bisect.bisect(bins,rtt)])
+                    if not measuredRtt is None:
+                        if (ipProbe, ip2) in measuredRtt:
+                            measuredRtt[(ipProbe, ip2)].append(rtt)
+                        else:
+                            measuredRtt[(ipProbe, ip2)] = [rtt]
 
                     # Infered rtt
-                    # if g.has_edge(ip1, ip2):
-                    if not ip1 is None and len(prevRttList):
-                        probaInfered[(ip1,ip2)].append(rtt-np.mean(prevRttList))
-                        # probaInfered[(ip1,ip2)].append(g.edge[ip1][ip2]["pmf"][bisect.bisect(bins,rtt - prevRtt)])
+                    if not inferredRtt is None and not ip1 is None and not np.all(np.isnan(prevRttList)) and ip1!=ip2:
+                        if (ip2,ip1) in inferredRtt:
+                            inferredRtt[(ip2,ip1)].append(rtt-prevRttAgg)
+                        else:
+                            if (ip1,ip2) in inferredRtt:
+                                inferredRtt[(ip1,ip2)].append(rtt-prevRttAgg)
+                            else:
+                                inferredRtt[(ip1,ip2)] = [rtt-prevRttAgg]
         finally:
-            prevRtt = rtt
             prevRttList = rttList
+            # TODO we miss 2 infered links if a router never replies
+            if not np.all(np.isnan(prevRttList)):
+                prevRttAgg = metric(prevRttList)
             ip1 = ip2
 
-    return probaMeasured, probaInfered
+    return measuredRtt, inferredRtt
+
+def readTracerouteQueue(queue, measuredRtt, inferredRtt):
+    """Read traceroutes from a queue. Used for multi-processing.
+    """
+
+    while True:
+        trace = queue.get()
+        readOneTraceroute(trace, measuredRtt, inferredRtt)
+        queue.task_done()
 
 
-def testDateRange(g,start = datetime(2015, 5, 10, 23, 45), 
-        end = datetime(2015, 5, 13, 23, 45), msmIDs = range(5001,5027)):
+def testDateRangeFS(g,start = datetime(2015, 5, 10, 23, 45), 
+        end = datetime(2015, 5, 12, 23, 45), msmIDs = range(5001,5027)):
 
     timeWindow = timedelta(minutes=30)
     stats = {"measured":defaultdict(list), "infered": defaultdict(list)}
-    allProbaMeasured = defaultdict(list)
-    allProbaInfered = defaultdict(list)
+    meanRttMeasured = defaultdict(list)
+    nbSamplesMeasured = defaultdict(list)
+    meanRttInfered = defaultdict(list)
+    nbSamplesInfered = defaultdict(list)
 
     currDate = start
     while currDate+timeWindow<end:
-        probaMeasured = defaultdict(list)
-        probaInfered = defaultdict(list)
+        rttMeasured = defaultdict(list)
+        rttInfered = defaultdict(list)
         sys.stderr.write("\rTesting %s " % currDate)
 
         for i, msmId in enumerate(msmIDs):
 
             if not os.path.exists("../data/%s_msmId%s.json" % (currDate, msmId)):
-                currDate += timeWindow
                 continue
 
             fi = open("../data/%s_msmId%s.json" % (currDate, msmId) )
             data = json.load(fi)
 
             for trace in data:
-                probaMeasured, probaInfered = testOneTrace(g, trace, probaMeasured, probaInfered)
+                readOneTraceroute(trace, rttMeasured, rttInfered)
 
-        for k, v in probaMeasured.iteritems():
-            allProbaMeasured[k].append(np.mean(v))
-        for k, v in probaInfered.iteritems():
-            allProbaInfered[k].append(np.mean(v))
+        for k, v in rttMeasured.iteritems():
+            meanRttMeasured[k].append(np.median(v))
+            nbSamplesMeasured[k].append(len(v))
+        for k, v in rttInfered.iteritems():
+            meanRttInfered[k].append(np.median(v))
+            nbSamplesInfered[k].append(len(v))
+            
 
         currDate += timeWindow
     
     sys.stderr.write("\n")
-    return stats, allProbaMeasured, allProbaInfered
+    return meanRttMeasured, meanRttInfered, nbSamplesMeasured, nbSamplesInfered
 
-def plotTestDateRange(res):
+def testDateRangeMongo(g,start = datetime(2015, 2, 1, 23, 45), 
+        end = datetime(2015, 2, 2, 23, 45), msmIDs = range(5001,5027)):
 
-    for msmId, (x,y) in res.iteritems():
-        plt.plot(x,y,label=msmId)
+    client = MongoClient("mongodb-iijlab")
+    db = client.atlas
+    collection = db.traceroute
 
-    plt.grid(True)
-    plt.legend()
-    plt.savefig("firstTry.eps")
+
+    timeWindow = 30*60  # 30 minutes
+    meanRttMeasured = defaultdict(list)
+    nbSamplesMeasured = defaultdict(list)
+    meanRttInfered = defaultdict(list)
+    nbSamplesInfered = defaultdict(list)
+
+    nbProcesses = 8
+    manager = Manager()
+    measuredRtt = manager.dict()
+    inferredRtt = manager.dict()
+    tracerouteQueue = JoinableQueue()
+    proc = []
+    for i in range(nbProcesses):
+        proc.append(Process(target=readTracerouteQueue, args=(tracerouteQueue, measuredRtt, inferredRtt)))
+        proc[i].start()
+
+    start = time.mktime(start.timetuple())
+    end = time.mktime(end.timetuple())
+
+    currDate = start
+    for trace in collection.find( {"$query": { "timestamp": {"$gte": start, "$lt": end}} , "$orderby":{"timestamp":1} }):
+        if trace["timestamp"] > currDate+timeWindow:
+
+            sys.stderr.write(" Waiting for workers...")
+            tracerouteQueue.join() 
+
+            sys.stderr.write("\rTesting %s " % currDate)
+
+            if currDate != start: 
+                for k, v in measuredRtt.iteritems():
+                    meanRttMeasured[k].append(np.median(v))
+                    nbSamplesMeasured[k].append(len(v))
+                for k, v in inferredRtt.iteritems():
+                    meanRttInfered[k].append(np.median(v))
+                    nbSamplesInfered[k].append(len(v))
+
+            measuredRtt.clear()
+            inferedRtt.clear()
+            currDate += timeWindow
+
+        tracerouteQueue.put(trace)
+        # readOneTraceroute(trace, rttMeasured, rttInfered)
+    
+    sys.stderr.write("\n")
+
+    return meanRttMeasured, meanRttInfered, nbSamplesMeasured, nbSamplesInfered
+
