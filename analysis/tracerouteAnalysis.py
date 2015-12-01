@@ -71,13 +71,18 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
 
     return measuredRtt, inferredRtt
 
-def readTracerouteQueue(queue, measuredRtt, inferredRtt):
+def readTracerouteQueue(queue, measuredRtts, inferredRtts, i):
     """Read traceroutes from a queue. Used for multi-processing.
     """
 
     while True:
-        trace = queue.get()
-        readOneTraceroute(trace, measuredRtt, inferredRtt)
+        bundle = queue.get()
+        measuredRtt = measuredRtts[i]
+        inferredRtt = inferredRtts[i]
+        for trace in bundle:
+            readOneTraceroute(trace, measuredRtt, inferredRtt)
+        measuredRtts[i] = measuredRtt
+        inferredRtts[i] = inferredRtt
         queue.task_done()
 
 
@@ -124,10 +129,15 @@ def testDateRangeFS(g,start = datetime(2015, 5, 10, 23, 45),
 def testDateRangeMongo(g,start = datetime(2015, 2, 1, 23, 45), 
         end = datetime(2015, 2, 2, 23, 45), msmIDs = range(5001,5027)):
 
-    client = MongoClient("mongodb-iijlab")
-    db = client.atlas
-    collection = db.traceroute
-
+    nbProcesses = 8
+    manager = Manager()
+    measuredRtts = manager.list()
+    inferredRtts = manager.list()
+    tracerouteQueue = JoinableQueue()
+    for i in range(nbProcesses):
+        measuredRtts.append({})
+        inferredRtts.append({})
+        Process(target=readTracerouteQueue, args=(tracerouteQueue, measuredRtts, inferredRtts, i)).start()
 
     timeWindow = 30*60  # 30 minutes
     meanRttMeasured = defaultdict(list)
@@ -135,44 +145,57 @@ def testDateRangeMongo(g,start = datetime(2015, 2, 1, 23, 45),
     meanRttInfered = defaultdict(list)
     nbSamplesInfered = defaultdict(list)
 
-    nbProcesses = 8
-    manager = Manager()
-    measuredRtt = manager.dict()
-    inferredRtt = manager.dict()
-    tracerouteQueue = JoinableQueue()
-    proc = []
-    for i in range(nbProcesses):
-        proc.append(Process(target=readTracerouteQueue, args=(tracerouteQueue, measuredRtt, inferredRtt)))
-        proc[i].start()
+    client = MongoClient("mongodb-iijlab", connect=True)
+    db = client.atlas
+    collection = db.traceroute
 
     start = time.mktime(start.timetuple())
     end = time.mktime(end.timetuple())
 
     currDate = start
+    bundle = []
     for trace in collection.find( {"$query": { "timestamp": {"$gte": start, "$lt": end}} , "$orderby":{"timestamp":1} }):
         if trace["timestamp"] > currDate+timeWindow:
 
-            sys.stderr.write(" Waiting for workers...")
+            tracerouteQueue.put(bundle)
+            bundle = []
+            sys.stderr.write(" Waiting for workers... queue size = %s" % tracerouteQueue.qsize())
             tracerouteQueue.join() 
 
+
+            sys.stderr.write(" Merging results...")
+            measuredRtt = defaultdict(list)
+            for mRtt in measuredRtt:
+                for k, v in mRtt:
+                    measuredRtt[k].extend(v)
+                mRtt.clear()
+
+            inferredRtt = defaultdict(list)
+            for mRtt in inferredRtt:
+                for k, v in mRtt:
+                    inferredRtt[k].extend(v)
+                mRtt.clear()
+
+            for k, v in measuredRtt.iteritems():
+                meanRttMeasured[k].append(np.median(v))
+                nbSamplesMeasured[k].append(len(v))
+            for k, v in inferredRtt.iteritems():
+                meanRttInfered[k].append(np.median(v))
+                nbSamplesInfered[k].append(len(v))
+
+            currDate += timeWindow
             sys.stderr.write("\rTesting %s " % currDate)
 
-            if currDate != start: 
-                for k, v in measuredRtt.iteritems():
-                    meanRttMeasured[k].append(np.median(v))
-                    nbSamplesMeasured[k].append(len(v))
-                for k, v in inferredRtt.iteritems():
-                    meanRttInfered[k].append(np.median(v))
-                    nbSamplesInfered[k].append(len(v))
-
-            measuredRtt.clear()
-            inferedRtt.clear()
-            currDate += timeWindow
-
-        tracerouteQueue.put(trace)
+        bundle.append(trace)
+        if len(bundle) >5000:
+            tracerouteQueue.put(bundle)
+            bundle = list()
         # readOneTraceroute(trace, rttMeasured, rttInfered)
     
     sys.stderr.write("\n")
+    tracerouteQueue.close()
 
     return meanRttMeasured, meanRttInfered, nbSamplesMeasured, nbSamplesInfered
 
+if __name__ == "__main__":
+    testDateRangeMongo(None)
