@@ -9,7 +9,7 @@ import glob
 import numpy as np
 from collections import defaultdict
 from scipy import stats
-from pymongo import MongoClient
+import pymongo
 from multiprocessing import Process, JoinableQueue, Manager
 import tools
 
@@ -18,7 +18,7 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     measured and infered RTTs.
     """
 
-    if "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
+    if trace is None or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
         return measuredRtt, inferredRtt
 
     ipProbe = "probe_%s"  % trace["prb_id"]
@@ -48,20 +48,14 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
 
                     # measured path
                     if not measuredRtt is None:
-                        if (ipProbe, ip2) in measuredRtt:
-                            measuredRtt[(ipProbe, ip2)].append(rtt)
-                        else:
-                            measuredRtt[(ipProbe, ip2)] = [rtt]
+                        measuredRtt[(ipProbe, ip2)].append(rtt)
 
                     # Infered rtt
                     if not inferredRtt is None and not ip1 is None and not np.all(np.isnan(prevRttList)) and ip1!=ip2:
                         if (ip2,ip1) in inferredRtt:
                             inferredRtt[(ip2,ip1)].append(rtt-prevRttAgg)
                         else:
-                            if (ip1,ip2) in inferredRtt:
-                                inferredRtt[(ip1,ip2)].append(rtt-prevRttAgg)
-                            else:
-                                inferredRtt[(ip1,ip2)] = [rtt-prevRttAgg]
+                            inferredRtt[(ip1,ip2)].append(rtt-prevRttAgg)
         finally:
             prevRttList = rttList
             # TODO we miss 2 infered links if a router never replies
@@ -76,14 +70,22 @@ def readTracerouteQueue(queue, measuredRtts, inferredRtts, i):
     """
 
     while True:
-        bundle = queue.get()
-        measuredRtt = measuredRtts[i]
-        inferredRtt = inferredRtts[i]
-        for trace in bundle:
-            readOneTraceroute(trace, measuredRtt, inferredRtt)
-        measuredRtts[i] = measuredRtt
-        inferredRtts[i] = inferredRtt
-        queue.task_done()
+        try: 
+            batch = queue.get()
+            tsS = time.time()
+            if batch is None: 
+                nbRow = 0
+                break
+            nbRow = len(batch)
+            measuredRtt = measuredRtts[i]
+            inferredRtt = inferredRtts[i]
+            for trace in batch:
+                readOneTraceroute(trace, measuredRtt, inferredRtt)
+            measuredRtts[i] = measuredRtt
+            inferredRtts[i] = inferredRtt
+        finally:
+            queue.task_done()
+            # print("Worker %i : %0.1f /sec., dict size: (%s, %s)" % (i,float(nbRow)/(time.time()-tsS), len(measuredRtt),len(inferredRtt)))
 
 
 def testDateRangeFS(g,start = datetime(2015, 5, 10, 23, 45), 
@@ -129,15 +131,18 @@ def testDateRangeFS(g,start = datetime(2015, 5, 10, 23, 45),
 def testDateRangeMongo(g,start = datetime(2015, 2, 1, 23, 45), 
         end = datetime(2015, 2, 2, 23, 45), msmIDs = range(5001,5027)):
 
-    nbProcesses = 8
+    nbProcesses = 4
+    batchSize = 5000
     manager = Manager()
     measuredRtts = manager.list()
     inferredRtts = manager.list()
     tracerouteQueue = JoinableQueue()
+    proc = []
     for i in range(nbProcesses):
-        measuredRtts.append({})
-        inferredRtts.append({})
-        Process(target=readTracerouteQueue, args=(tracerouteQueue, measuredRtts, inferredRtts, i)).start()
+        measuredRtts.append(defaultdict(list))
+        inferredRtts.append(defaultdict(list))
+        proc.append(Process(target=readTracerouteQueue, args=(tracerouteQueue, measuredRtts, inferredRtts, i)))
+        proc[i].start()
 
     timeWindow = 30*60  # 30 minutes
     meanRttMeasured = defaultdict(list)
@@ -145,7 +150,7 @@ def testDateRangeMongo(g,start = datetime(2015, 2, 1, 23, 45),
     meanRttInfered = defaultdict(list)
     nbSamplesInfered = defaultdict(list)
 
-    client = MongoClient("mongodb-iijlab", connect=True)
+    client = pymongo.MongoClient("mongodb-iijlab", connect=True)
     db = client.atlas
     collection = db.traceroute
 
@@ -153,28 +158,43 @@ def testDateRangeMongo(g,start = datetime(2015, 2, 1, 23, 45),
     end = time.mktime(end.timetuple())
 
     currDate = start
-    bundle = []
-    for trace in collection.find( {"$query": { "timestamp": {"$gte": start, "$lt": end}} , "$orderby":{"timestamp":1} }):
+    batch = np.array([None]*batchSize) 
+    tsS = time.time()
+    nbRow = 0
+    nbRowTotal = 0
+    for trace in collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
+            projection={"timestamp": 1, "result":1, "prb_id":1} , 
+            sort=[("timestamp", pymongo.ASCENDING)],
+            cursor_type=pymongo.cursor.CursorType.EXHAUST):
         if trace["timestamp"] > currDate+timeWindow:
 
-            tracerouteQueue.put(bundle)
-            bundle = []
-            sys.stderr.write(" Waiting for workers... queue size = %s" % tracerouteQueue.qsize())
+            tracerouteQueue.put(batch)
+            sys.stderr.write(" Waiting for workers... queue size = %s, %s/sec\n" % (tracerouteQueue.qsize(), float(nbRowTotal)/(time.time()-tsS)))
+            tsS = time.time()
+            batch = np.array([None]*batchSize) 
+            nbRow = 0
+            nbRowTotal = 0
             tracerouteQueue.join() 
 
 
-            sys.stderr.write(" Merging results...")
+            sys.stderr.write(" Merging results...\n")
             measuredRtt = defaultdict(list)
-            for mRtt in measuredRtt:
-                for k, v in mRtt:
+            for mRtt in measuredRtts:
+                for k, v in mRtt.iteritems():
                     measuredRtt[k].extend(v)
-                mRtt.clear()
 
             inferredRtt = defaultdict(list)
-            for mRtt in inferredRtt:
-                for k, v in mRtt:
+            for iRtt in inferredRtts:
+                for k, v in iRtt.iteritems():
                     inferredRtt[k].extend(v)
+                    
+            for i in range(nbProcesses):
+                mRtt = measuredRtts[i]
+                iRtt = inferredRtts[i]
                 mRtt.clear()
+                iRtt.clear()
+                measuredRtts[i] = mRtt
+                inferredRtts[i] = iRtt
 
             for k, v in measuredRtt.iteritems():
                 meanRttMeasured[k].append(np.median(v))
@@ -186,13 +206,23 @@ def testDateRangeMongo(g,start = datetime(2015, 2, 1, 23, 45),
             currDate += timeWindow
             sys.stderr.write("\rTesting %s " % currDate)
 
-        bundle.append(trace)
-        if len(bundle) >5000:
-            tracerouteQueue.put(bundle)
-            bundle = list()
+        batch[nbRow] = trace
+        nbRow += 1
+        nbRowTotal += 1
+        if nbRow == batchSize:
+            tracerouteQueue.put(batch)
+            batch = np.array([None]*batchSize)
+            nbRow = 0
+            
         # readOneTraceroute(trace, rttMeasured, rttInfered)
     
     sys.stderr.write("\n")
+    for _ in range(nbProcesses):
+        tracerouteQueue.put(None)
+
+    for i in range(nbProcesses):
+        proc[i].join()
+
     tracerouteQueue.close()
 
     return meanRttMeasured, meanRttInfered, nbSamplesMeasured, nbSamplesInfered
