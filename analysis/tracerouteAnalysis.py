@@ -262,7 +262,6 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "experimentDate": datetime.now(),
             }
 
-
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
     detectionExperiments = db.detectionExperiments
