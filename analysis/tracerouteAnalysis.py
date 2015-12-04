@@ -220,10 +220,14 @@ def outlierDetection(sampleDistributions, pastData, param, expId, ts,
                 boundary = ref + (refVar*tau)
 
                 if testPoint > boundary:
-                    confidence = (boundary - ref)/refVar
+                    if refVar != 0:
+                        confidence = (boundary - ref)/refVar
+                    else:
+                        confidence = 0
                     alarm = {"timeBin": ts, "ipPair": ipPair, "score": testPoint,
                             "refBoundary": boundary, "ref":ref, "refVar":refVar,
-                            "confidence": confidence,"expId": expId}
+                            "nbSamples": len(dist), "confidence": confidence,
+                            "expId": expId}
 
                     if collection is None:
                         # Write the result to the standard output
@@ -243,7 +247,7 @@ def outlierDetection(sampleDistributions, pastData, param, expId, ts,
 
 def detectRttChangesMongo(configFile="detection.cfg"):
 
-    nbProcesses = 8
+    nbProcesses = 4
     binMult = 10
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
@@ -257,7 +261,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "msmIDs": range(5001,5027),
             "tau": 3*1.4826, # multiply by 1.4826 in case of MAD 
             "metrics": str(metrics),
-            "historySize": (86400/1800)*1,  # 3 days
+            "historySize": (86400/1800)*7,  # 3 days
             "minSample": 20,
             "experimentDate": datetime.now(),
             }
@@ -266,7 +270,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     db = client.atlas
     detectionExperiments = db.detectionExperiments
     alarmsCollection = db.alarms
-    expId = detectionExperiments.insert_one(expParam) 
+    expId = detectionExperiments.insert_one(expParam).inserted_id 
 
     medianRttMeasured = defaultdict(deque)
     medianRttInferred = defaultdict(deque)
