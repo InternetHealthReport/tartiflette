@@ -1,6 +1,30 @@
+import matplotlib as mpl
+mpl.use('Agg')
 import matplotlib.pylab as plt
 import tools
+import pandas as pd
 
+# TODO: finish this
+def nbAlarms(expIds):
+
+    db = tools.connect_mongo()
+    collection = db.alarms
+
+    plt.figure()
+    for expId in expIds:
+        cursor = collection.find({"_id": expId}).aggregate([{"$group":{"_id": "$ts", "count": {"$sum":1}}}])
+
+	# Expand the cursor and construct the DataFrame
+	df =  pd.DataFrame(list(cursor))
+
+	# Delete the _id
+	if no_id:
+	    del df['_id']
+
+        df.plot()
+        
+    plt.savefig("nbAlarms.eps")
+    
 
 def sampleVsShapiro(results):
 

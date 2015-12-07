@@ -66,28 +66,6 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
 
     return measuredRtt, inferredRtt
 
-def readTracerouteQueue(queue, measuredRtts, inferredRtts, i):
-    """Read traceroutes from a queue. Used for multi-processing.
-    """
-
-    while True:
-        try: 
-            batch = queue.get()
-            tsS = time.time()
-            if batch is None: 
-                nbRow = 0
-                break
-            nbRow = len(batch)
-            measuredRtt = measuredRtts[i]
-            inferredRtt = inferredRtts[i]
-            for trace in batch:
-                readOneTraceroute(trace, measuredRtt, inferredRtt)
-            measuredRtts[i] = measuredRtt
-            inferredRtts[i] = inferredRtt
-        finally:
-            queue.task_done()
-            # print("Worker %i : %0.1f /sec., dict size: (%s, %s)" % (i,float(nbRow)/(time.time()-tsS), len(measuredRtt),len(inferredRtt)))
-
 
 def computeRtt( (start, end) ):
     """Read traceroutes from a cursor. Used for multi-processing.
@@ -195,64 +173,86 @@ def getMedianSamplesMongo(start = datetime(2015, 6, 7, 23, 45),
     return result 
 
 
-def outlierDetection(sampleDistributions, pastData, param, expId, ts, 
-        collection=None, updatePastData=True):
+def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, ts, 
 
-        alarms = []
-        otherParams={}
-        metrics = param["metrics"]
-        tau = param["tau"]
-        historySize = param["historySize"]
-        minSample = param["minSample"]
+    collection=None, updatePastData=True):
 
-        for ipPair, dist in sampleDistributions.iteritems():
+    alarms = []
+    otherParams={}
+    metrics = param["metrics"]
+    tau = param["tau"]
+    historySize = param["historySize"]
+    minSample = param["minSample"]
 
-            # Compute the distribution median
-            if len(dist) < minSample:
-                continue
-            testPoint = metrics[0](dist)
+    for ipPair, dist in sampleDistributions.iteritems():
 
-            #test is done only if there is enough enough samples
-            pMedians = pastData[ipPair]
-            if len(pMedians) == historySize:
-                ref = metrics[0](pMedians)   
-                refVar    = metrics[1](pMedians)
-                boundary = ref + (refVar*tau)
+        n = len(dist) 
+        # Compute the distribution mean
+        if n < minSample:
+            continue
+        sn = metrics[0](dist, dtype=np.float64)
 
-                if testPoint > boundary:
-                    if refVar != 0:
-                        confidence = (boundary - ref)/refVar
-                    else:
-                        confidence = 0
-                    alarm = {"timeBin": ts, "ipPair": ipPair, "score": testPoint,
-                            "refBoundary": boundary, "ref":ref, "refVar":refVar,
-                            "nbSamples": len(dist), "confidence": confidence,
-                            "expId": expId}
+        pMeanDiff = pastMeanDiff[ipPair]
+        if len(pMeanDiff) == historySize:       # if the bootstrap is done
+            pMean = pastMean[ipPair]
+            mu = metrics[1](pMean["mean"])   
 
-                    if collection is None:
-                        # Write the result to the standard output
-                        print alarm 
-                    else:
-                        alarms.append(alarm)
-            
-            if updatePastData:
-                pMedians.appendleft(testPoint)
-                if len(pMedians)> historySize:
-                    pMedians.pop()
+            # Estimate parameters for distribution of sqrt(n)*(sn-mu)
+            ref = metrics[1](pMeanDiff)   
+            refVar    = metrics[2](pMeanDiff)
+            boundary = ref + (refVar*tau)
 
-        # Insert all alarms to the database
-        if len(alarms) and not collection is None:
-            collection.insert_many(alarms)
+            testPoint = np.sqrt(n)*(sn-mu)
+            if testPoint > boundary:
+                confidence = 0
+                if refVar != 0:
+                    confidence = (testPoint - ref)/refVar
+
+                alarm = {"timeBin": ts, "ipPair": ipPair, "score": testPoint,
+                        "refBoundary": boundary, "ref":ref, "refVar":refVar, "mu":mu,
+                        "sn": sn, "nbSamples": n, "confidence": confidence,
+                        "expId": expId}
+
+                if collection is None:
+                    # Write the result to the standard output
+                    print alarm 
+                else:
+                    alarms.append(alarm)
+        
+        if updatePastData:
+
+            if ipPair not in pastMean: 
+                pastMean[ipPair] = {"mean": deque(maxlen=historySize), "nbSamp": deque(maxlen=historySize)}
+
+            pMean = pastMean[ipPair]
+            prevLen = len(pMean["mean"])
+
+            pMean["mean"].append(sn)
+            pMean["nbSamp"].append(n)
+
+            if prevLen != historySize and len(pMean["mean"]) == historySize:
+                # Got all data for bootstrap
+                # compute the past: sqrt(n)*(S_n - \mu)
+                mu = np.median(pMean["mean"])
+                for sn, n in zip(pMean["mean"], pMean["nbSamp"]):
+                    
+                    pMeanDiff.append(np.sqrt(n)*(sn-mu))
+
+                # End of the bootstrap!
+
+    # Insert all alarms to the database
+    if len(alarms) and not collection is None:
+        collection.insert_many(alarms)
 
 
 def detectRttChangesMongo(configFile="detection.cfg"):
 
-    nbProcesses = 4
+    nbProcesses = 6
     binMult = 10
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     # TODO clean this:
-    metrics = [np.median, tools.mad]
+    metrics = [np.mean, np.median, tools.mad] 
 
     expParam = {
             "timeWindow": 30*60, # 30 minutes
@@ -261,7 +261,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "msmIDs": range(5001,5027),
             "tau": 3*1.4826, # multiply by 1.4826 in case of MAD 
             "metrics": str(metrics),
-            "historySize": (86400/1800)*7,  # 3 days
+            "historySize": (86401/1800)*7,  # 3 days
             "minSample": 20,
             "experimentDate": datetime.now(),
             }
@@ -272,8 +272,10 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     alarmsCollection = db.alarms
     expId = detectionExperiments.insert_one(expParam).inserted_id 
 
-    medianRttMeasured = defaultdict(deque)
-    medianRttInferred = defaultdict(deque)
+    sampleMeanMeasured = {} 
+    sampleMeanInferred = {}
+    meanDiffMeasured = defaultdict(deque)
+    meanDiffInferred = defaultdict(deque)
 
     start = int(time.mktime(expParam["start"].timetuple()))
     end = int(time.mktime(expParam["end"].timetuple()))
@@ -296,8 +298,9 @@ def detectRttChangesMongo(configFile="detection.cfg"):
         measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults)
 
         # Detect oulier values
-        for dist, pastData in [(measuredRtt, medianRttMeasured), (inferredRtt, medianRttInferred)]:
-            outlierDetection(dist, pastData, expParam, expId, 
+        for dist, pastMean, pastMeanDiff in [(measuredRtt, sampleMeanMeasured, meanDiffMeasured),
+                (inferredRtt, sampleMeanInferred, meanDiffInferred)]:
+            outlierDetection(dist, pastMean, pastMeanDiff, expParam, expId, 
                     datetime.fromtimestamp(currDate), alarmsCollection)
 
         timeSpent = (time.time()-tsS)

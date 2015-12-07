@@ -1,5 +1,7 @@
 import re
 import numpy as np
+from pymongo import MongoClient
+
 
 # https://en.wikipedia.org/wiki/Private_network
 priv_lo = re.compile("^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
@@ -20,3 +22,46 @@ def mad(arr):
     arr = np.ma.array(arr).compressed() # should be faster to not use masked arrays.
     med = np.median(arr)
     return np.median(np.abs(arr - med))
+
+
+def connect_mongo(host="mongodb-iijlab", port=27017, db="atlas", username="", password=""):
+    """ A util for making a connection to mongo """
+
+    if username and password:
+        mongo_uri = 'mongodb://%s:%s@%s:%s/%s' % (username, password, host, port, db)
+        conn = MongoClient(mongo_uri)
+    else:
+        conn = MongoClient(host, port)
+
+
+    return conn[db]
+
+
+
+
+
+# TODO: remove the following:
+
+class RingBuffer():
+    "A 1D ring buffer using numpy arrays"
+    def __init__(self, length):
+        self.data = np.zeros(length, dtype='f')
+        self.index = 0
+
+    def extend(self, x):
+        "adds array x to ring buffer"
+        x_index = (self.index + np.arange(x.size)) % self.data.size
+        self.data[x_index] = x
+        self.index = x_index[-1] + 1
+
+    def get(self):
+        "Returns the first-in-first-out data in the ring buffer"
+        idx = (self.index + np.arange(self.data.size)) %self.data.size
+        return self.data[idx]
+
+def ringbuff_numpy_test():
+    ringlen = 100000
+    ringbuff = RingBuffer(ringlen)
+    for i in range(40):
+        ringbuff.extend(np.zeros(10000, dtype='f')) # write
+        ringbuff.get() #read
