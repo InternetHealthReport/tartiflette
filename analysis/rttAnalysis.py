@@ -67,6 +67,16 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     return measuredRtt, inferredRtt
 
 
+
+######## used by child processes
+collection = None
+
+def processInit():
+    global collection
+    client = pymongo.MongoClient("mongodb-iijlab",connect=True)
+    db = client.atlas
+    collection = db.traceroute
+
 def computeRtt( (start, end) ):
     """Read traceroutes from a cursor. Used for multi-processing.
     """
@@ -89,6 +99,7 @@ def computeRtt( (start, end) ):
 
     return measuredRtt, inferredRtt, nbRow
 
+######## used by child processes
 
 def mergeRttResults(rttResults):
 
@@ -105,16 +116,6 @@ def mergeRttResults(rttResults):
             nbRow += compRows
 
         return measuredRtt, inferredRtt, nbRow
-
-
-# used by child processes
-collection = None
-
-def processInit():
-    global collection
-    client = pymongo.MongoClient("mongodb-iijlab",connect=True)
-    db = client.atlas
-    collection = db.traceroute
 
 
 def getMedianSamplesMongo(start = datetime(2015, 6, 7, 23, 45), 
