@@ -270,7 +270,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
     detectionExperiments = db.rttExperiments
-    alarmsCollection = db.alarms
+    alarmsCollection = db.rttChanges
     expId = detectionExperiments.insert_one(expParam).inserted_id 
 
     sampleMeanMeasured = {} 

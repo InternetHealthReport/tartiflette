@@ -13,60 +13,53 @@ from scipy import stats
 import pymongo
 from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
+import pykov
 
-def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
-    """Read a single traceroute instance and compute the corresponding 
-    measured and inferred RTTs.
+
+# type needed for child processes
+def ddType():
+    return defaultdict(int)
+
+def routeCount():
+    return defaultdict(ddType)
+
+
+def readOneTraceroute(trace, routes):
+    """Read a single traceroute instance and compute the corresponding routes.
     """
-
+    
+    # TODO verify that error doesn't mean packet lost
     if trace is None or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
-        return measuredRtt, inferredRtt
+        return 
 
     ipProbe = "probe_%s"  % trace["prb_id"]
-    ip1 = None
-    ip2 = None
+    dstIp = trace["dst_addr"]
+    listRouter = routes[dstIp]
+    prevIps = [ipProbe]*3
+    currIps = []
 
-    for hopNb, hop in enumerate(trace["result"]):
-        # print "i=%s  and hop=%s" % (hopNb, hop)
+    for hop in trace["result"]:
+        
+        if "result" in hop :
+            for resNb, res in enumerate(hop["result"]):
+                # In case of routers not sending ICMP or packet loss, result
+                # looks like: 
+                # {u'result': [{u'x': u'*'}, {u'x': u'*'}, {u'x': u'*'}], u'hop': 6}, 
+                if not "from" in res:
+                    ip = "x"
+                elif tools.isPrivateIP(res["from"]):
+                    continue
+                else:
+                    ip = res["from"]
 
-        try:
-            # TODO: clean that workaround results containing no IP, e.g.:
-            # {u'result': [{u'x': u'*'}, {u'x': u'*'}, {u'x': u'*'}], u'hop': 6}, 
+                for prevIp in prevIps:
+                    listRouter[prevIp][ip] += 1
 
-            if "result" in hop :
-
-                rttList = np.array([np.nan]*len(hop["result"])) 
-                for resNb, res in enumerate(hop["result"]):
-                    if not "from" in res  or tools.isPrivateIP(res["from"]) or not "rtt" in res or res["rtt"] <= 0.0:
-                        continue
-
-                    # if hopNb+1!=hop["hop"]:
-                        # print trace
-                    assert hopNb+1==hop["hop"] or hop["hop"]==255 
-                    ip2 = res["from"]
-                    rtt =  res["rtt"]
-                    rttList[resNb] = rtt
-
-                    # measured path
-                    if not measuredRtt is None:
-                        measuredRtt[(ipProbe, ip2)].append(rtt)
-
-                    # Inferred rtt
-                    if not inferredRtt is None and not ip1 is None and not np.all(np.isnan(prevRttList)) and ip1!=ip2:
-                        if (ip2,ip1) in inferredRtt:
-                            inferredRtt[(ip2,ip1)].append(rtt-prevRttAgg)
-                        else:
-                            inferredRtt[(ip1,ip2)].append(rtt-prevRttAgg)
-        finally:
-            prevRttList = rttList
-            # TODO we miss 2 inferred links if a router never replies
-            if not np.all(np.isnan(prevRttList)):
-                prevRttAgg = metric(prevRttList)
-            ip1 = ip2
-
-    return measuredRtt, inferredRtt
-
-
+                currIps.append(ip)
+    
+        if currIps:
+            prevIps = currIps
+            currIps = []
 
 ######## used by child processes
 collection = None
@@ -77,122 +70,72 @@ def processInit():
     db = client.atlas
     collection = db.traceroute
 
-def computeRtt( (start, end) ):
+
+def countRoutes( (start, end) ):
     """Read traceroutes from a cursor. Used for multi-processing.
     """
 
     tsS = time.time()
     nbRow = 0
-    measuredRtt = defaultdict(list)
-    inferredRtt = defaultdict(list)
+    routes = defaultdict(routeCount)
     tsM = time.time()
     cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
-            projection={"timestamp": 1, "result":1, "prb_id":1} , 
+            projection={"timestamp": 1, "result":1, "prb_id":1, "dst_addr":1} , 
             cursor_type=pymongo.cursor.CursorType.EXHAUST)
     tsM = time.time() - tsM
     for trace in cursor: 
-        readOneTraceroute(trace, measuredRtt, inferredRtt)
+        readOneTraceroute(trace, routes)
         nbRow += 1
     timeSpent = time.time()-tsS
-    # print("Worker %0.1f /sec., dict size: (%s, %s), mongo time: %s, total time: %s"
-            # % (float(nbRow)/(timeSpent), len(measuredRtt),len(inferredRtt), tsM, timeSpent))
+    print("Worker %0.1f /sec.,  mongo time: %s, total time: %s"
+            % (float(nbRow)/(timeSpent), tsM, timeSpent))
 
-    return measuredRtt, inferredRtt, nbRow
+    return routes, nbRow
 
-######## used by child processes
-
-def mergeRttResults(rttResults):
-
-        measuredRtt = defaultdict(list)
-        inferredRtt = defaultdict(list)
-        nbRow = 0 
-        for mRtt, iRtt, compRows in rttResults:
-            for k, v in mRtt.iteritems():
-                measuredRtt[k].extend(v)
-
-            for k, v in iRtt.iteritems():
-                inferredRtt[k].extend(v)
-
-            nbRow += compRows
-
-        return measuredRtt, inferredRtt, nbRow
+######## (end) used by child processes
 
 
-def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, ts, 
+def mergeRoutes(poolResults):
 
-    collection=None, updatePastData=True):
+    mergedRoutes = defaultdict(routeCount)
 
-    alarms = []
-    otherParams={}
-    metrics = param["metrics"]
-    tau = param["tau"]
-    historySize = param["historySize"]
-    minSample = param["minSample"]
+    nbRow = 0 
+    for oneProcResult, compRows in poolResults:
+        for target, routes in oneProcResult.iteritems():
+            for ip0, nextHops in routes.iteritems(): 
+                ip0Counter = mergedRoutes[target][ip0]
+                for ip1, count in nextHops.iteritems():
+                    ip0Counter[ip1] += count
 
-    for ipPair, dist in sampleDistributions.iteritems():
+        nbRow += compRows
 
-        n = len(dist) 
-        # Compute the distribution mean
-        if n < minSample:
-            continue
-        sn = metrics[0](dist, dtype=np.float64)
+    return mergedRoutes, nbRow
 
-        pMeanDiff = pastMeanDiff[ipPair]
-        if len(pMeanDiff) == historySize:       # if the bootstrap is done
-            pMean = pastMean[ipPair]
-            mu = metrics[1](pMean["mean"])   
 
-            # Estimate parameters for distribution of sqrt(n)*(sn-mu)
-            ref = metrics[1](pMeanDiff)   
-            refVar    = metrics[2](pMeanDiff)
-            boundary = ref + (refVar*tau)
+def updateReference(refRoutes, newRoutes, oldRoutes):
 
-            testPoint = np.sqrt(n)*(sn-mu)
-            if testPoint > boundary:
-                confidence = 0
-                if refVar != 0:
-                    confidence = (testPoint - ref)/refVar
+    if oldRoutes is None:
+        oldRoutes = defaultdict(routeCount)
 
-                alarm = {"timeBin": ts, "ipPair": ipPair, "score": testPoint,
-                        "refBoundary": boundary, "ref":ref, "refVar":refVar, "mu":mu,
-                        "sn": sn, "nbSamples": n, "confidence": confidence,
-                        "expId": expId}
+    allTargets = set(newRoutes.keys()).union(oldRoutes.keys())
 
-                if collection is None:
-                    # Write the result to the standard output
-                    print alarm 
-                else:
-                    alarms.append(alarm)
+    for target in allTargets:
         
-        if updatePastData:
+        allIp0 = set(newRoutes[target].keys()).union(oldRoutes[target].keys())
+        for ip0 in allIp0:
+            newRoutesIp0 = newRoutes[target][ip0]
+            oldRoutesIp0 = oldRoutes[target][ip0]
+            refRoutesIp0 = refRoutes[target][ip0]
 
-            if ipPair not in pastMean: 
-                pastMean[ipPair] = {"mean": deque(maxlen=historySize), "nbSamp": deque(maxlen=historySize)}
-
-            pMean = pastMean[ipPair]
-            prevLen = len(pMean["mean"])
-
-            pMean["mean"].append(sn)
-            pMean["nbSamp"].append(n)
-
-            if prevLen != historySize and len(pMean["mean"]) == historySize:
-                # Got all data for bootstrap
-                # compute the past: sqrt(n)*(S_n - \mu)
-                mu = np.median(pMean["mean"])
-                for sn, n in zip(pMean["mean"], pMean["nbSamp"]):
-                    
-                    pMeanDiff.append(np.sqrt(n)*(sn-mu))
-
-                # End of the bootstrap!
-
-    # Insert all alarms to the database
-    if len(alarms) and not collection is None:
-        collection.insert_many(alarms)
+            allIp1 = set(newRoutesIp0.keys()).union(oldRoutesIp0.keys())
+            for ip1 in allIp1:
+                refRoutesIp0[ip1] += newRoutesIp0[ip1] - oldRoutesIp0[ip1]
+                assert refRoutesIp0[ip1] >= 0
 
 
-def detectRouteChangesMongo(configFile="detection.cfg"): # todo config file implementation
+def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file implementation
 
-    nbProcesses = 6
+    nbProcesses = 4
     binMult = 10
     pool = Pool(nbProcesses,initializer=processInit) 
 
@@ -201,19 +144,19 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # todo config file impl
             "start": datetime(2015, 5, 31, 23, 45), 
             "end":   datetime(2015, 7, 1, 0, 0),
             "msmIDs": range(5001,5027),
-            "tau": 3*1.4826, # multiply by 1.4826 in case of MAD 
-            "historySize": (86401/1800)*1,  # 3 days
+            "alpha": 0.01, # significance level for the chi-square test
+            "historySize": (86401/1800)*3,  # 3 days
             "experimentDate": datetime.now(),
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
     detectionExperiments = db.routeExperiments
-    alarmsCollection = db.alarms
+    alarmsCollection = db.routeChanges
     expId = detectionExperiments.insert_one(expParam).inserted_id 
 
-    packetPerEdge = defaultdict(lambda : deque(maxlen=expParam["historySize"]))
-    packetPerNode = defaultdict(lambda : deque(maxlen=expParam["historySize"]))
+    refRoutes = defaultdict(routeCount)
+    routeHistory = deque(maxlen=expParam["historySize"])
 
     start = int(time.mktime(expParam["start"].timetuple()))
     end = int(time.mktime(expParam["end"].timetuple()))
@@ -228,17 +171,25 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # todo config file impl
         for i in range(nbProcesses*binMult):
             params.append( (binEdges[i], binEdges[i+1]) )
 
-        measuredRtt = defaultdict(list)
-        inferredRtt = defaultdict(list)
         nbRow = 0 
-        routeCounts =  pool.imap_unordered(countRoutes, params) # ----
-        measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults)
+        routes =  pool.imap_unordered(countRoutes, params)
+        routes, nbRow = mergeRoutes(routes)
 
-        # Detect oulier values
-        for dist, pastMean, pastMeanDiff in [(measuredRtt, sampleMeanMeasured, meanDiffMeasured),
-                (inferredRtt, sampleMeanInferred, meanDiffInferred)]:
-            outlierDetection(dist, pastMean, pastMeanDiff, expParam, expId, 
+        if len(routeHistory) == expParam["historySize"]:
+            # Detect route changes
+            routeChangeDetection(routes, refRoutes, expParam, expId, 
                     datetime.fromtimestamp(currDate), alarmsCollection)
+            
+            # Update routes reference
+            oldRoutes = routeHistory.pop()
+            updateReference(refRoutes, routes, oldRoutes)
+            routeHistory.appendleft(routes)
+
+        elif nbRow > 0:
+            # Still in the bootstrap
+            # Update the reference 
+            updateReference(refRoutes, routes, None)
+            routeHistory.appendleft(routes)
 
         timeSpent = (time.time()-tsS)
         sys.stderr.write("Done in %s seconds,  %s row/sec\n" % (timeSpent, float(nbRow)/timeSpent))
@@ -247,6 +198,53 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # todo config file impl
     pool.close()
     pool.join()
     
+
+def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=None, updatePastData=True):
+
+    alarms = []
+
+    for target, routes in routesToTest.iteritems():
+        routesRef = refRoutes[target]
+        for ip0, nextHops in routes.iteritems(): 
+            nextHopsRef = routesRef[ip0] 
+            allHops = set()
+            for key in set(nextHops.keys()).union(nextHopsRef.keys()):
+                # Make sure we don't count ip that are not observed in both variables
+                if nextHops[key] or nextHopsRef[key]:
+                    allHops.add(key)
+           
+            if len(allHops) == 1: # only one IP, means no change
+                continue
+            else:
+                count = []
+                countRef = []
+                for ip1 in allHops:
+                    count.append(nextHops[ip1])
+                    countRef.append(nextHopsRef[ip1])
+
+                    # replace zeros in the observed data:
+                    if not count[-1]:
+                        count[-1]=1
+                    if not countRef[-1]:
+                        countRef[-1]=1
+
+                chi2, p, dof, _ = stats.chi2_contingency([count,countRef],correction=True)
+                if p < param["alpha"]:
+
+                    alarm = {"timeBin": ts, "ip": ip0, "p-value": p,
+                            "refNextHops": str(nextHopsRef), "obsNextHops": str(nextHops),
+                            "expId": expId}
+
+                    if collection is None:
+                        # Write the result to the standard output
+                        print alarm 
+                    else:
+                        alarms.append(alarm)
+
+    # Insert all alarms to the database
+    if alarms and not collection is None:
+        collection.insert_many(alarms)
+
 
 if __name__ == "__main__":
     # testDateRangeMongo(None,save_to_file=True)
