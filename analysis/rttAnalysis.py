@@ -183,13 +183,13 @@ def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, 
     metrics = param["metrics"]
     tau = param["tau"]
     historySize = param["historySize"]
-    minSample = param["minSample"]
+    minSamples = param["minSamples"]
 
     for ipPair, dist in sampleDistributions.iteritems():
 
         n = len(dist) 
         # Compute the distribution mean
-        if n < minSample:
+        if n < minSamples:
             continue
         sn = metrics[0](dist, dtype=np.float64)
 
@@ -264,7 +264,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "tau": 3, # multiplied by 1.4826 in outlier detection
             "metrics": str(metrics),
             "historySize": (86401/1800)*7,  # 3 days
-            "minSample": 50,
+            "minSamples": 50,
             "experimentDate": datetime.now(),
             }
 
