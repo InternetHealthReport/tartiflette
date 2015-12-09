@@ -200,7 +200,7 @@ def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, 
 
             # Estimate parameters for distribution of sqrt(n)*(sn-mu)
             ref = metrics[1](pMeanDiff)   
-            refVar    = metrics[2](pMeanDiff)
+            refVar    = metrics[2](pMeanDiff)*1.4826  # for MAD it should be multiplied by 1.4826
             boundary = ref + (refVar*tau)
 
             testPoint = np.sqrt(n)*(sn-mu)
@@ -236,10 +236,11 @@ def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, 
                 # compute the past: sqrt(n)*(S_n - \mu)
                 mu = np.median(pMean["mean"])
                 for sn, n in zip(pMean["mean"], pMean["nbSamp"]):
-                    
                     pMeanDiff.append(np.sqrt(n)*(sn-mu))
 
-                # End of the bootstrap!
+            elif prevLen == historySize:
+                # Update pMeanDiff with new value
+                pMeanDiff.append(testPoint)
 
     # Insert all alarms to the database
     if len(alarms) and not collection is None:
@@ -256,14 +257,14 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     metrics = [np.mean, np.median, tools.mad] 
 
     expParam = {
-            "timeWindow": 30*60, # 30 minutes
+            "timeWindow": 60*60, # in seconds 
             "start": datetime(2015, 5, 31, 23, 45), 
             "end":   datetime(2015, 7, 1, 0, 0),
             "msmIDs": range(5001,5027),
-            "tau": 3*1.4826, # multiply by 1.4826 in case of MAD 
+            "tau": 3, # multiplied by 1.4826 in outlier detection
             "metrics": str(metrics),
             "historySize": (86401/1800)*7,  # 3 days
-            "minSample": 20,
+            "minSample": 50,
             "experimentDate": datetime.now(),
             }
 
@@ -283,7 +284,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     expParam["metrics"] = metrics
 
     for currDate in range(start,end,expParam["timeWindow"]):
-        sys.stderr.write("Analyzing %s " % currDate)
+        sys.stderr.write("Analyzing %s " % datetime.fromtimestamp(currDate))
         tsS = time.time()
 
         # Get distributions for the current time bin
