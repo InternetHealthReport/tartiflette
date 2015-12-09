@@ -141,7 +141,7 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
 
     expParam = {
             "timeWindow": 60*60, # in seconds
-            "start": datetime(2015, 5, 31, 23, 45), 
+            "start": datetime(2015, 6, 2, 23, 45), 
             "end":   datetime(2015, 7, 1, 0, 0),
             "msmIDs": range(5001,5027),
             "alpha": 0.01, # significance level for the chi-square test
@@ -163,7 +163,7 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
     end = int(time.mktime(expParam["end"].timetuple()))
 
     for currDate in range(start,end,expParam["timeWindow"]):
-        sys.stderr.write("Analyzing %s " % currDate)
+        sys.stderr.write("Route analysis %s" % datetime.fromtimestamp(currDate))
         tsS = time.time()
 
         # count packet routes for the current time bin
@@ -193,7 +193,7 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
             routeHistory.appendleft(routes)
 
         timeSpent = (time.time()-tsS)
-        sys.stderr.write("Done in %s seconds,  %s row/sec\n" % (timeSpent, float(nbRow)/timeSpent))
+        sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
     
     sys.stderr.write("\n")
     pool.close()
@@ -215,14 +215,15 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
                     allHops.add(key)
            
             nbSamples = np.sum(nextHops.values())
-            if len(allHops) == 1                         # only one IP, means no change 
-                or nbSamples < param["minSamples"]:      # or not enough samples
+            nbSamplesRef = np.sum(nextHopsRef.values())
+            if len(allHops) == 1  or nbSamples < param["minSamples"]:                        
+                # only one IP (means no route change) or not enough samples
                 continue
             else:
                 count = []
                 countRef = []
                 avg = nbSamples 
-                avgRef = np.sum(nextHopsRef.values())
+                avgRef = nbSamplesRef 
                 for ip1 in allHops:
                     if nextHops[ip1] > avg*0.25 or nextHopsRef[ip1] > avgRef*0.25: 
                         count.append(nextHops[ip1])

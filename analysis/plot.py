@@ -36,7 +36,7 @@ def nbRouteChanges(expIds):
     db = tools.connect_mongo()
     collection = db.routeChanges
 
-    plt.figure()
+    fig = plt.figure()
     for expId in expIds:
         cursor = collection.aggregate([
             # {"$match": {"expId": objectid.ObjectId(expId), 
@@ -51,9 +51,12 @@ def nbRouteChanges(expIds):
         df["_id"] = pd.to_datetime(df["_id"])
         df.set_index("_id")
 
-        df.plot()
-        
-    plt.savefig("nbRouteChange.eps")
+        plt.plot(df["_id"],df["count"]) 
+
+    fig.autofmt_xdate()
+    plt.grid(True)
+    plt.ylabel(label)
+    plt.savefig("%s_%s.eps" % ())
     
     return df
 

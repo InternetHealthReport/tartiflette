@@ -284,7 +284,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     expParam["metrics"] = metrics
 
     for currDate in range(start,end,expParam["timeWindow"]):
-        sys.stderr.write("Analyzing %s " % datetime.fromtimestamp(currDate))
+        sys.stderr.write("Rtt analysis %s" % datetime.fromtimestamp(currDate))
         tsS = time.time()
 
         # Get distributions for the current time bin
@@ -306,7 +306,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
                     datetime.fromtimestamp(currDate), alarmsCollection)
 
         timeSpent = (time.time()-tsS)
-        sys.stderr.write("Done in %s seconds,  %s row/sec\n" % (timeSpent, float(nbRow)/timeSpent))
+        sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
     
     sys.stderr.write("\n")
     pool.close()
