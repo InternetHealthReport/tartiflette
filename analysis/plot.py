@@ -3,8 +3,9 @@ mpl.use('Agg')
 import matplotlib.pylab as plt
 import tools
 import pandas as pd
+from bson import objectid
+import re
 
-# TODO: finish this
 def nbAlarms(expIds):
 
     db = tools.connect_mongo()
@@ -12,19 +13,25 @@ def nbAlarms(expIds):
 
     plt.figure()
     for expId in expIds:
-        cursor = collection.find({"_id": expId}).aggregate([{"$group":{"_id": "$ts", "count": {"$sum":1}}}])
+        cursor = collection.aggregate([
+            {"$match": {"expId": objectid.ObjectId(expId), "confidence": {"$gt":10}, 
+                "ipPair.0": {"$not": re.compile("probe.*")}}}, 
+                # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
+            {"$group":{"_id": "$timeBin", "count": {"$sum":1}}},
+            {"$sort": {"_id": 1}}
+            ])
 
 	# Expand the cursor and construct the DataFrame
 	df =  pd.DataFrame(list(cursor))
 
-	# Delete the _id
-	if no_id:
-	    del df['_id']
+	# # Delete the _id
+        # del df['_id']
 
         df.plot()
         
     plt.savefig("nbAlarms.eps")
     
+    return df
 
 def sampleVsShapiro(results):
 

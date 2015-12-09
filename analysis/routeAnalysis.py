@@ -87,8 +87,8 @@ def countRoutes( (start, end) ):
         readOneTraceroute(trace, routes)
         nbRow += 1
     timeSpent = time.time()-tsS
-    print("Worker %0.1f /sec.,  mongo time: %s, total time: %s"
-            % (float(nbRow)/(timeSpent), tsM, timeSpent))
+    # print("Worker %0.1f /sec.,  mongo time: %s, total time: %s"
+            # % (float(nbRow)/(timeSpent), tsM, timeSpent))
 
     return routes, nbRow
 
@@ -140,13 +140,14 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
     pool = Pool(nbProcesses,initializer=processInit) 
 
     expParam = {
-            "timeWindow": 30*60, # 30 minutes
+            "timeWindow": 60*60, # in seconds
             "start": datetime(2015, 5, 31, 23, 45), 
             "end":   datetime(2015, 7, 1, 0, 0),
             "msmIDs": range(5001,5027),
             "alpha": 0.01, # significance level for the chi-square test
-            "historySize": (86401/1800)*3,  # 3 days
+            "historySize": (86401/1800)*1,  # 3 days
             "experimentDate": datetime.now(),
+            "minSamples": 150,
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
@@ -213,33 +214,39 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
                 if nextHops[key] or nextHopsRef[key]:
                     allHops.add(key)
            
-            if len(allHops) == 1: # only one IP, means no change
+            nbSamples = np.sum(nextHops.values())
+            if len(allHops) == 1                         # only one IP, means no change 
+                or nbSamples < param["minSamples"]:      # or not enough samples
                 continue
             else:
                 count = []
                 countRef = []
+                avg = nbSamples 
+                avgRef = np.sum(nextHopsRef.values())
                 for ip1 in allHops:
-                    count.append(nextHops[ip1])
-                    countRef.append(nextHopsRef[ip1])
+                    if nextHops[ip1] > avg*0.25 or nextHopsRef[ip1] > avgRef*0.25: 
+                        count.append(nextHops[ip1])
+                        countRef.append(nextHopsRef[ip1])
 
-                    # replace zeros in the observed data:
-                    if not count[-1]:
-                        count[-1]=1
-                    if not countRef[-1]:
-                        countRef[-1]=1
+                        # replace zeros in the observed data:
+                        if not count[-1]:
+                            count[-1]=3
+                        if not countRef[-1]:
+                            countRef[-1]=3
 
-                chi2, p, dof, _ = stats.chi2_contingency([count,countRef],correction=True)
-                if p < param["alpha"]:
+                if len(count) > 1: 
+                    chi2, p, dof, _ = stats.chi2_contingency([count,countRef],correction=True)
+                    if p < param["alpha"]:
 
-                    alarm = {"timeBin": ts, "ip": ip0, "p-value": p,
-                            "refNextHops": str(nextHopsRef), "obsNextHops": str(nextHops),
-                            "expId": expId}
+                        alarm = {"timeBin": ts, "ip": ip0, "p-value": p, "dst_ip": target,
+                                "refNextHops": str(nextHopsRef), "obsNextHops": str(nextHops),
+                                "expId": expId}
 
-                    if collection is None:
-                        # Write the result to the standard output
-                        print alarm 
-                    else:
-                        alarms.append(alarm)
+                        if collection is None:
+                            # Write the result to the standard output
+                            print alarm 
+                        else:
+                            alarms.append(alarm)
 
     # Insert all alarms to the database
     if alarms and not collection is None:
