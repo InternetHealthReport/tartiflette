@@ -6,10 +6,10 @@ import pandas as pd
 from bson import objectid
 import re
 
-def nbAlarms(expIds):
+def nbRttChanges(expIds):
 
     db = tools.connect_mongo()
-    collection = db.alarms
+    collection = db.rttChanges
 
     plt.figure()
     for expId in expIds:
@@ -24,12 +24,36 @@ def nbAlarms(expIds):
 	# Expand the cursor and construct the DataFrame
 	df =  pd.DataFrame(list(cursor))
 
-	# # Delete the _id
-        # del df['_id']
-
         df.plot()
         
     plt.savefig("nbAlarms.eps")
+    
+    return df
+
+
+def nbRouteChanges(expIds):
+
+    db = tools.connect_mongo()
+    collection = db.routeChanges
+
+    plt.figure()
+    for expId in expIds:
+        cursor = collection.aggregate([
+            # {"$match": {"expId": objectid.ObjectId(expId), 
+                # "ip": {"$not": re.compile("probe.*")}}}, 
+                # # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
+            {"$group":{"_id": "$timeBin", "count": {"$sum":1}}},
+            {"$sort": {"_id": 1}}
+            ])
+
+	# Expand the cursor and construct the DataFrame
+	df =  pd.DataFrame(list(cursor))
+        df["_id"] = pd.to_datetime(df["_id"])
+        df.set_index("_id")
+
+        df.plot()
+        
+    plt.savefig("nbRouteChange.eps")
     
     return df
 
