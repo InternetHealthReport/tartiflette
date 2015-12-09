@@ -240,7 +240,7 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
 
                         alarm = {"timeBin": ts, "ip": ip0, "p-value": p, "dst_ip": target,
                                 "refNextHops": str(nextHopsRef), "obsNextHops": str(nextHops),
-                                "expId": expId}
+                                "expId": expId, "nbSamples": nbSamples}
 
                         if collection is None:
                             # Write the result to the standard output
