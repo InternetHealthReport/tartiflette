@@ -2,6 +2,7 @@ import sys
 import itertools
 from datetime import datetime
 from datetime import timedelta
+from pytz import timezone
 import time
 import os
 import json
@@ -81,7 +82,8 @@ def countRoutes( (start, end) ):
     tsM = time.time()
     cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
             projection={"timestamp": 1, "result":1, "prb_id":1, "dst_addr":1} , 
-            cursor_type=pymongo.cursor.CursorType.EXHAUST)
+            cursor_type=pymongo.cursor.CursorType.EXHAUST,
+            batch_size=int(10e6))
     tsM = time.time() - tsM
     for trace in cursor: 
         readOneTraceroute(trace, routes)
@@ -95,12 +97,12 @@ def countRoutes( (start, end) ):
 ######## (end) used by child processes
 
 
-def mergeRoutes(poolResults):
+def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
     mergedRoutes = defaultdict(routeCount)
 
     nbRow = 0 
-    for oneProcResult, compRows in poolResults:
+    for i, (oneProcResult, compRows) in enumerate(poolResults):
         for target, routes in oneProcResult.iteritems():
             for ip0, nextHops in routes.iteritems(): 
                 ip0Counter = mergedRoutes[target][ip0]
@@ -108,44 +110,41 @@ def mergeRoutes(poolResults):
                     ip0Counter[ip1] += count
 
         nbRow += compRows
+        timeSpent = (time.time()-tsS)
+        sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.fromtimestamp(currDate),
+            "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
 
     return mergedRoutes, nbRow
 
 
-def updateReference(refRoutes, newRoutes, oldRoutes):
+def updateReference(refRoutes, newRoutes, alpha):
 
-    if oldRoutes is None:
-        oldRoutes = defaultdict(routeCount)
+    for target, targetRoutes in newRoutes.iteritems():
 
-    allTargets = set(newRoutes.keys()).union(oldRoutes.keys())
-
-    for target in allTargets:
-        
-        allIp0 = set(newRoutes[target].keys()).union(oldRoutes[target].keys())
-        for ip0 in allIp0:
-            newRoutesIp0 = newRoutes[target][ip0]
-            oldRoutesIp0 = oldRoutes[target][ip0]
+        for ip0, newRoutesIp0 in targetRoutes.iteritems():
             refRoutesIp0 = refRoutes[target][ip0]
+            allPeers = set(refRoutesIp0.keys()).union(newRoutesIp0.keys())
 
-            allIp1 = set(newRoutesIp0.keys()).union(oldRoutesIp0.keys())
-            for ip1 in allIp1:
-                refRoutesIp0[ip1] += newRoutesIp0[ip1] - oldRoutesIp0[ip1]
+            for ip1 in allPeers:
+                newCount = newRoutesIp0[ip1]
+                refRoutesIp0[ip1] = alpha*newCount + (1.0-alpha)*refRoutesIp0[ip1] 
                 assert refRoutesIp0[ip1] >= 0
 
 
 def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file implementation
 
-    nbProcesses = 4
-    binMult = 10
+    nbProcesses = 6
+    binMult = 5 
     pool = Pool(nbProcesses,initializer=processInit) 
 
     expParam = {
             "timeWindow": 60*60, # in seconds
-            "start": datetime(2015, 6, 2, 23, 45), 
-            "end":   datetime(2015, 7, 1, 0, 0),
+            "bootstrapPeriod": 24*7,  # 7 days
+            "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
+            "end":   datetime(2015, 7, 1, 8, 0, tzinfo=timezone("UTC")),
             "msmIDs": range(5001,5027),
-            "alpha": 0.01, # significance level for the chi-square test
-            "historySize": (86401/1800)*1,  # 3 days
+            "alpha": 0.1, # parameter for exponential smoothing 
+            "minCorr": 0.25, # correlation lower than this value will be reported
             "experimentDate": datetime.now(),
             "minSamples": 150,
             }
@@ -157,13 +156,13 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
     expId = detectionExperiments.insert_one(expParam).inserted_id 
 
     refRoutes = defaultdict(routeCount)
-    routeHistory = deque(maxlen=expParam["historySize"])
 
     start = int(time.mktime(expParam["start"].timetuple()))
     end = int(time.mktime(expParam["end"].timetuple()))
+    nbIteration = 0
 
+    sys.stderr.write("Route analysis:\n")
     for currDate in range(start,end,expParam["timeWindow"]):
-        sys.stderr.write("Route analysis %s" % datetime.fromtimestamp(currDate))
         tsS = time.time()
 
         # count packet routes for the current time bin
@@ -174,26 +173,19 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
 
         nbRow = 0 
         routes =  pool.imap_unordered(countRoutes, params)
-        routes, nbRow = mergeRoutes(routes)
+        routes, nbRow = mergeRoutes(routes, currDate, tsS, nbProcesses*binMult)
 
-        if len(routeHistory) == expParam["historySize"]:
+        if nbIteration > expParam["bootstrapPeriod"]:
             # Detect route changes
             routeChangeDetection(routes, refRoutes, expParam, expId, 
                     datetime.fromtimestamp(currDate), alarmsCollection)
             
-            # Update routes reference
-            oldRoutes = routeHistory.pop()
-            updateReference(refRoutes, routes, oldRoutes)
-            routeHistory.appendleft(routes)
+        # Update routes reference
+        updateReference(refRoutes, routes, expParam["alpha"])
 
-        elif nbRow > 0:
-            # Still in the bootstrap
-            # Update the reference 
-            updateReference(refRoutes, routes, None)
-            routeHistory.appendleft(routes)
+        if nbRow>0:
+            nbIteration+=1
 
-        timeSpent = (time.time()-tsS)
-        sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
     
     sys.stderr.write("\n")
     pool.close()
@@ -208,7 +200,7 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
         routesRef = refRoutes[target]
         for ip0, nextHops in routes.iteritems(): 
             nextHopsRef = routesRef[ip0] 
-            allHops = set()
+            allHops = set(["x"])
             for key in set(nextHops.keys()).union(nextHopsRef.keys()):
                 # Make sure we don't count ip that are not observed in both variables
                 if nextHops[key] or nextHopsRef[key]:
@@ -216,7 +208,7 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
            
             nbSamples = np.sum(nextHops.values())
             nbSamplesRef = np.sum(nextHopsRef.values())
-            if len(allHops) == 1  or nbSamples < param["minSamples"]:                        
+            if len(allHops) == 2  or nbSamples < param["minSamples"]:                        
                 # only one IP (means no route change) or not enough samples
                 continue
             else:
@@ -225,23 +217,16 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
                 avg = nbSamples 
                 avgRef = nbSamplesRef 
                 for ip1 in allHops:
-                    if nextHops[ip1] > avg*0.25 or nextHopsRef[ip1] > avgRef*0.25: 
-                        count.append(nextHops[ip1])
-                        countRef.append(nextHopsRef[ip1])
-
-                        # replace zeros in the observed data:
-                        if not count[-1]:
-                            count[-1]=3
-                        if not countRef[-1]:
-                            countRef[-1]=3
+                    count.append(nextHops[ip1])
+                    countRef.append(nextHopsRef[ip1])
 
                 if len(count) > 1: 
-                    chi2, p, dof, _ = stats.chi2_contingency([count,countRef],correction=True)
-                    if p < param["alpha"]:
+                    corr = np.corrcoef(count,countRef)[0][1]
+                    if corr < param["minCorr"]:
 
-                        alarm = {"timeBin": ts, "ip": ip0, "p-value": p, "dst_ip": target,
+                        alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target,
                                 "refNextHops": str(nextHopsRef), "obsNextHops": str(nextHops),
-                                "expId": expId, "nbSamples": nbSamples}
+                                "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count)}
 
                         if collection is None:
                             # Write the result to the standard output

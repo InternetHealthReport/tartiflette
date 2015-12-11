@@ -2,6 +2,7 @@ import sys
 import itertools
 from datetime import datetime
 from datetime import timedelta
+from pytz import timezone
 import time
 import os
 import json
@@ -88,7 +89,8 @@ def computeRtt( (start, end) ):
     tsM = time.time()
     cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
             projection={"timestamp": 1, "result":1, "prb_id":1} , 
-            cursor_type=pymongo.cursor.CursorType.EXHAUST)
+            cursor_type=pymongo.cursor.CursorType.EXHAUST,
+            batch_size=int(10e6))
     tsM = time.time() - tsM
     for trace in cursor: 
         readOneTraceroute(trace, measuredRtt, inferredRtt)
@@ -121,8 +123,8 @@ def mergeRttResults(rttResults):
 def getMedianSamplesMongo(start = datetime(2015, 6, 7, 23, 45), 
         end = datetime(2015, 6, 13, 23, 59), msmIDs = range(5001,5027),save_to_file=False):
 
-    nbProcesses = 8
-    binMult = 10
+    nbProcesses = 6
+    binMult = 5 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     timeWindow = 30*60  # 30 minutes
@@ -175,8 +177,7 @@ def getMedianSamplesMongo(start = datetime(2015, 6, 7, 23, 45),
 
 
 def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, ts, 
-
-    collection=None, updatePastData=True):
+    collection=None):
 
     alarms = []
     otherParams={}
@@ -193,6 +194,12 @@ def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, 
             continue
         sn = metrics[0](dist, dtype=np.float64)
 
+        # update past data
+        if ipPair not in pastMean: 
+            pastMean[ipPair] = {"mean": deque(maxlen=historySize), "nbSamp": deque(maxlen=historySize)}
+            pastMeanDiff[ipPair] = deque(maxlen=historySize) 
+
+        pMean = pastMean[ipPair]
         pMeanDiff = pastMeanDiff[ipPair]
         if len(pMeanDiff) == historySize:       # if the bootstrap is done
             pMean = pastMean[ipPair]
@@ -200,18 +207,25 @@ def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, 
 
             # Estimate parameters for distribution of sqrt(n)*(sn-mu)
             ref = metrics[1](pMeanDiff)   
+            refMean = np.mean(pMeanDiff)   
             refVar    = metrics[2](pMeanDiff)*1.4826  # for MAD it should be multiplied by 1.4826
+            refStd    = np.std(pMeanDiff)  # for MAD it should be multiplied by 1.4826
             boundary = ref + (refVar*tau)
 
             testPoint = np.sqrt(n)*(sn-mu)
+            # Update pMeanDiff with new value
+            pMeanDiff.append(testPoint)
+
             if testPoint > boundary:
                 confidence = 0
                 if refVar != 0:
                     confidence = (testPoint - ref)/refVar
+                    confidenceMean = (testPoint - refMean)/refStd
 
                 alarm = {"timeBin": ts, "ipPair": ipPair, "score": testPoint,
                         "refBoundary": boundary, "ref":ref, "refVar":refVar, "mu":mu,
                         "sn": sn, "nbSamples": n, "confidence": confidence,
+                        "confidenceMean": confidenceMean, "refMean": refMean, "refStd": refStd,
                         "expId": expId}
 
                 if collection is None:
@@ -220,27 +234,16 @@ def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, 
                 else:
                     alarms.append(alarm)
         
-        if updatePastData:
+        pMean["mean"].append(sn)
+        pMean["nbSamp"].append(n)
 
-            if ipPair not in pastMean: 
-                pastMean[ipPair] = {"mean": deque(maxlen=historySize), "nbSamp": deque(maxlen=historySize)}
+        if len(pMean["mean"]) >= historySize and len(pMeanDiff) < historySize:
+            # Got all data for bootstrap
+            # compute the past: sqrt(n)*(S_n - \mu)
+            mu = np.median(pMean["mean"])
+            for sn, n in zip(pMean["mean"], pMean["nbSamp"]):
+                pMeanDiff.append(np.sqrt(n)*(sn-mu))
 
-            pMean = pastMean[ipPair]
-            prevLen = len(pMean["mean"])
-
-            pMean["mean"].append(sn)
-            pMean["nbSamp"].append(n)
-
-            if prevLen != historySize and len(pMean["mean"]) == historySize:
-                # Got all data for bootstrap
-                # compute the past: sqrt(n)*(S_n - \mu)
-                mu = np.median(pMean["mean"])
-                for sn, n in zip(pMean["mean"], pMean["nbSamp"]):
-                    pMeanDiff.append(np.sqrt(n)*(sn-mu))
-
-            elif prevLen == historySize:
-                # Update pMeanDiff with new value
-                pMeanDiff.append(testPoint)
 
     # Insert all alarms to the database
     if len(alarms) and not collection is None:
@@ -258,12 +261,12 @@ def detectRttChangesMongo(configFile="detection.cfg"):
 
     expParam = {
             "timeWindow": 60*60, # in seconds 
-            "start": datetime(2015, 5, 31, 23, 45), 
-            "end":   datetime(2015, 7, 1, 0, 0),
+            "historySize": 24*7,  # 7 days
+            "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
+            "end":   datetime(2015, 7, 1, 8, 0, tzinfo=timezone("UTC")),
             "msmIDs": range(5001,5027),
             "tau": 3, # multiplied by 1.4826 in outlier detection
             "metrics": str(metrics),
-            "historySize": (86401/1800)*7,  # 3 days
             "minSamples": 50,
             "experimentDate": datetime.now(),
             }
@@ -276,8 +279,8 @@ def detectRttChangesMongo(configFile="detection.cfg"):
 
     sampleMeanMeasured = {} 
     sampleMeanInferred = {}
-    meanDiffMeasured = defaultdict(deque)
-    meanDiffInferred = defaultdict(deque)
+    meanDiffMeasured = {}
+    meanDiffInferred = {}
 
     start = int(time.mktime(expParam["start"].timetuple()))
     end = int(time.mktime(expParam["end"].timetuple()))

@@ -5,11 +5,11 @@ from ripe.atlas.cousteau import AtlasResultsRequest
 import json
 
 # Measurments IDs
-builtinIdv4 = range(5001,5027)
+builtinIdv4 = [5001] #range(5001,5027)
 
 # dates
-start = datetime(2015, 5, 10, 23, 45)
-end = datetime(2015, 5, 12, 23, 45)
+start = datetime(2015, 11, 15, 23, 45)
+end = datetime(2015, 12, 6, 23, 45)
 timeWindow = timedelta(minutes=30)
 
 errors = []

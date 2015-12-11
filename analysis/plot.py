@@ -5,28 +5,143 @@ import tools
 import pandas as pd
 from bson import objectid
 import re
+from pytz import timezone
+
+######## used by child processes
+collection = None
+
+def processInit():
+    global collection
+    client = pymongo.MongoClient("mongodb-iijlab",connect=True)
+    db = client.atlas
+    collection = db.traceroute
+
+def computeRtt( (start, end, ip1, ip2) ):
+    """Read traceroutes from a cursor. Used for multi-processing.
+    """
+
+    tsS = time.time()
+    nbRow = 0
+    measuredRtt = defaultdict(list)
+    inferredRtt = defaultdict(list)
+    tsM = time.time()
+    cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end},
+            "result": { $elemMatch: { "result": {$elemMatch: {"from": ip1}} } }} , 
+            projection={"timestamp": 1, "result":1, "prb_id":1} , 
+            cursor_type=pymongo.cursor.CursorType.EXHAUST,
+            batch_size=int(10e6))
+    tsM = time.time() - tsM
+    for trace in cursor: 
+        readOneTraceroute(trace, measuredRtt, inferredRtt)
+        nbRow += 1
+    timeSpent = time.time()-tsS
+    # print("Worker %0.1f /sec., dict size: (%s, %s), mongo time: %s, total time: %s"
+            # % (float(nbRow)/(timeSpent), len(measuredRtt),len(inferredRtt), tsM, timeSpent))
+
+    return measuredRtt, inferredRtt, nbRow
+
+######## used by child processes
+
+def plotRttEvolution(configFile="detection.cfg"):
+
+    nbProcesses = 6
+    binMult = 10
+    pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
+
+    # TODO clean this:
+    metrics = [np.mean, np.median, tools.mad] 
+
+    expParam = {
+            "timeWindow": 60*60, # in seconds 
+            "historySize": 24*7,  # 7 days
+            "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
+            "end":   datetime(2015, 7, 1, 8, 0, tzinfo=timezone("UTC")),
+            "msmIDs": range(5001,5027),
+            "tau": 3, # multiplied by 1.4826 in outlier detection
+            "metrics": str(metrics),
+            "minSamples": 50,
+            "experimentDate": datetime.now(),
+            }
+
+    client = pymongo.MongoClient("mongodb-iijlab")
+    db = client.atlas
+    detectionExperiments = db.rttExperiments
+    alarmsCollection = db.rttChanges
+    expId = detectionExperiments.insert_one(expParam).inserted_id 
+
+    sampleMeanMeasured = {} 
+    sampleMeanInferred = {}
+    meanDiffMeasured = {}
+    meanDiffInferred = {}
+
+    start = int(time.mktime(expParam["start"].timetuple()))
+    end = int(time.mktime(expParam["end"].timetuple()))
+    expParam["metrics"] = metrics
+
+    for currDate in range(start,end,expParam["timeWindow"]):
+        sys.stderr.write("Rtt analysis %s" % datetime.fromtimestamp(currDate))
+        tsS = time.time()
+
+        # Get distributions for the current time bin
+        params = []
+        binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], nbProcesses*binMult+1)
+        for i in range(nbProcesses*binMult):
+            params.append( (binEdges[i], binEdges[i+1]) )
+
+        measuredRtt = defaultdict(list)
+        inferredRtt = defaultdict(list)
+        nbRow = 0 
+        rttResults =  pool.imap_unordered(computeRtt, params)
+        measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults)
+
+        # Detect oulier values
+        for dist, pastMean, pastMeanDiff in [(measuredRtt, sampleMeanMeasured, meanDiffMeasured),
+                (inferredRtt, sampleMeanInferred, meanDiffInferred)]:
+            outlierDetection(dist, pastMean, pastMeanDiff, expParam, expId, 
+                    datetime.fromtimestamp(currDate), alarmsCollection)
+
+        timeSpent = (time.time()-tsS)
+        sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
+    
+    sys.stderr.write("\n")
+    pool.close()
+    pool.join()
+    
+
+
+
 
 def nbRttChanges(expIds):
 
     db = tools.connect_mongo()
     collection = db.rttChanges
 
-    plt.figure()
-    for expId in expIds:
-        cursor = collection.aggregate([
-            {"$match": {"expId": objectid.ObjectId(expId), "confidence": {"$gt":10}, 
-                "ipPair.0": {"$not": re.compile("probe.*")}}}, 
-                # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
-            {"$group":{"_id": "$timeBin", "count": {"$sum":1}}},
-            {"$sort": {"_id": 1}}
-            ])
+    # for expId in expIds:
+    cursor = collection.aggregate([
+        {"$match": {
+            # "expId": objectid.ObjectId(expId),
+            "confidence": {"$gt":10}, 
+            "ipPair.0": {"$regex": re.compile("probe.*")}
+            }}, 
+            # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
+        {"$group":{"_id": "$timeBin", "count": {"$sum":1}}},
+        {"$sort": {"_id": 1}}
+        ])
 
-	# Expand the cursor and construct the DataFrame
-	df =  pd.DataFrame(list(cursor))
+    df =  pd.DataFrame(list(cursor))
+    df["_id"] = pd.to_datetime(df["_id"],utc=True)
+    df.set_index("_id")
 
-        df.plot()
+    fig = plt.figure()
+    # plt.plot_date(df["_id"],df["count"],tz=timezone("UTC"))
+    plt.plot(df["_id"],df["count"])
+
+    fig.autofmt_xdate()
+    plt.grid(True)
+    plt.ylabel("Nb. rtt changes")
+    plt.show()
         
-    plt.savefig("nbAlarms.eps")
+    plt.savefig("rttChanges.eps")
     
     return df
 
@@ -36,9 +151,32 @@ def nbRouteChanges(expIds):
     db = tools.connect_mongo()
     collection = db.routeChanges
 
-    fig = plt.figure()
-    for expId in expIds:
+    targets = [
+        "193.0.19.33",
+        "192.33.4.12",
+        "192.5.5.241",
+        "199.7.83.42",
+        "199.7.91.13",
+        "128.63.2.53",
+        "192.112.36.4",
+        "198.41.0.4",
+        "213.133.109.134",
+        "192.228.79.201",
+        "78.46.48.134",
+        "192.58.128.30",
+        "192.36.148.17",
+        "193.0.14.129",
+        "202.12.27.33",
+        "192.203.230.10",
+        "84.205.83.1"
+]
+
+    for dst_ip in targets:
+        # for expId in expIds:
         cursor = collection.aggregate([
+            {"$match": {"dst_ip": dst_ip}}, #, "corr": {"$lt": 0.05}}},
+            # {"$match": {"nbSamples": {"$gt": 500}}},
+            # {"$match": {"ip": {"$not": re.compile("probe.*")}}},
             # {"$match": {"expId": objectid.ObjectId(expId), 
                 # "ip": {"$not": re.compile("probe.*")}}}, 
                 # # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
@@ -46,19 +184,21 @@ def nbRouteChanges(expIds):
             {"$sort": {"_id": 1}}
             ])
 
-	# Expand the cursor and construct the DataFrame
-	df =  pd.DataFrame(list(cursor))
-        df["_id"] = pd.to_datetime(df["_id"])
+        # Expand the cursor and construct the DataFrame
+        df =  pd.DataFrame(list(cursor))
+        df["_id"] = pd.to_datetime(df["_id"],utc=True)
         df.set_index("_id")
 
-        plt.plot(df["_id"],df["count"]) 
+        fig = plt.figure()
+        # plt.plot_date(df["_id"],df["count"],tz=timezone("UTC"))
+        plt.plot(df["_id"],df["count"],label=dst_ip)
 
-    fig.autofmt_xdate()
-    plt.grid(True)
-    plt.ylabel(label)
-    plt.savefig("%s_%s.eps" % ())
+        fig.autofmt_xdate()
+        plt.grid(True)
+        plt.ylabel("Nb. route changes")
+        plt.legend()
+        plt.savefig("routeChange_%s.eps" % dst_ip)
     
-    return df
 
 def sampleVsShapiro(results):
 
