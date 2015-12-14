@@ -2,10 +2,27 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pylab as plt
 import tools
+import rttAnalysis
 import pandas as pd
 from bson import objectid
 import re
 from pytz import timezone
+import sys
+import itertools
+from datetime import datetime
+from datetime import timedelta
+from pytz import timezone
+import time
+import os
+import json
+import glob
+import numpy as np
+from collections import defaultdict
+from collections import deque
+from scipy import stats
+import pymongo
+from multiprocessing import Process, JoinableQueue, Manager, Pool
+import tools
 
 ######## used by child processes
 collection = None
@@ -26,13 +43,13 @@ def computeRtt( (start, end, ip1, ip2) ):
     inferredRtt = defaultdict(list)
     tsM = time.time()
     cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end},
-            "result": { $elemMatch: { "result": {$elemMatch: {"from": ip1}} } }} , 
+            "result": { "$elemMatch": { "result": {"$elemMatch": {"from": ip2}} } }} , 
             projection={"timestamp": 1, "result":1, "prb_id":1} , 
             cursor_type=pymongo.cursor.CursorType.EXHAUST,
             batch_size=int(10e6))
     tsM = time.time() - tsM
     for trace in cursor: 
-        readOneTraceroute(trace, measuredRtt, inferredRtt)
+        rttAnalysis.readOneTraceroute(trace, measuredRtt, inferredRtt)
         nbRow += 1
     timeSpent = time.time()-tsS
     # print("Worker %0.1f /sec., dict size: (%s, %s), mongo time: %s, total time: %s"
@@ -42,7 +59,37 @@ def computeRtt( (start, end, ip1, ip2) ):
 
 ######## used by child processes
 
-def plotRttEvolution(configFile="detection.cfg"):
+def plotRttEvolution(res):
+
+    mean = []
+    ref = []
+    refVar = []
+    start = np.min(res[3])
+    end = np.max(res[3])
+    dateRange = [start+timedelta(days=x) for x in range((end-start).days)]
+
+    for d in dateRange:
+        ref.append(np.median(res[2][res[3]==d]))
+        refVar.append(tools.mad(res[2][res[3]==d]))
+        mean.append(np.mean(res[0][res[1]==d]))
+
+    fig = plt.figure()
+    # plt.fill_between(dateRange, -1*refVar, refVar, "g", lw=1)
+    plt.plot(dateRange, ref, "k", lw=1)
+    plt.plot(dateRange, mean, "r", lw=2)
+    plt.grid(True)
+    fig.autofmt_xdate()
+    plt.savefig("rttModel.eps")
+
+    fig = plt.figure()
+    plt.plot(res[1], res[0],"x")
+    plt.grid(True)
+    plt.yscale("log")
+    fig.autofmt_xdate() 
+    plt.savefig("rttRawData.eps")
+
+
+def getRttData(ip1,ip2):
 
     nbProcesses = 6
     binMult = 10
@@ -63,12 +110,6 @@ def plotRttEvolution(configFile="detection.cfg"):
             "experimentDate": datetime.now(),
             }
 
-    client = pymongo.MongoClient("mongodb-iijlab")
-    db = client.atlas
-    detectionExperiments = db.rttExperiments
-    alarmsCollection = db.rttChanges
-    expId = detectionExperiments.insert_one(expParam).inserted_id 
-
     sampleMeanMeasured = {} 
     sampleMeanInferred = {}
     meanDiffMeasured = {}
@@ -78,27 +119,39 @@ def plotRttEvolution(configFile="detection.cfg"):
     end = int(time.mktime(expParam["end"].timetuple()))
     expParam["metrics"] = metrics
 
+    rawRtt = []
+    rawRttDate = []
+    refRtt = []
+    refRttDate = []
+
     for currDate in range(start,end,expParam["timeWindow"]):
         sys.stderr.write("Rtt analysis %s" % datetime.fromtimestamp(currDate))
         tsS = time.time()
+        currDatetime = datetime.fromtimestamp(currDate)
 
         # Get distributions for the current time bin
         params = []
         binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], nbProcesses*binMult+1)
         for i in range(nbProcesses*binMult):
-            params.append( (binEdges[i], binEdges[i+1]) )
+            params.append( (binEdges[i], binEdges[i+1], ip1, ip2) )
 
         measuredRtt = defaultdict(list)
         inferredRtt = defaultdict(list)
         nbRow = 0 
         rttResults =  pool.imap_unordered(computeRtt, params)
-        measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults)
+        measuredRtt, inferredRtt, nbRow = rttAnalysis.mergeRttResults(rttResults)
 
         # Detect oulier values
         for dist, pastMean, pastMeanDiff in [(measuredRtt, sampleMeanMeasured, meanDiffMeasured),
                 (inferredRtt, sampleMeanInferred, meanDiffInferred)]:
-            outlierDetection(dist, pastMean, pastMeanDiff, expParam, expId, 
-                    datetime.fromtimestamp(currDate), alarmsCollection)
+            rttAnalysis.outlierDetection(dist, pastMean, pastMeanDiff, expParam, None, 
+                    currDatetime, None)
+
+        rawRtt.extend(measuredRtt[(ip1,ip2)])
+        rawRttDate.extend([currDatetime]*len(measuredRtt[(ip1,ip2)]))
+        if (ip1, ip2) in meanDiffMeasured:
+            refRtt.extend(meanDiffMeasured[(ip1,ip2)])
+            refRttDate.extend([currDatetime]*len(meanDiffMeasured[(ip1,ip2)]))
 
         timeSpent = (time.time()-tsS)
         sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
@@ -107,8 +160,7 @@ def plotRttEvolution(configFile="detection.cfg"):
     pool.close()
     pool.join()
     
-
-
+    return (rawRtt, rawRttDate, refRtt, refRttDate)
 
 
 def nbRttChanges(expIds):
@@ -120,11 +172,11 @@ def nbRttChanges(expIds):
     cursor = collection.aggregate([
         {"$match": {
             # "expId": objectid.ObjectId(expId),
-            "confidence": {"$gt":10}, 
-            "ipPair.0": {"$regex": re.compile("probe.*")}
+            "confidence": {"$gt":100}, 
+            "ipPair.0": {"$not": re.compile("probe.*")}
             }}, 
             # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
-        {"$group":{"_id": "$timeBin", "count": {"$sum":1}}},
+        {"$group":{"_id": "$timeBin", "count": {"$sum":"$nbSamples"}}},
         {"$sort": {"_id": 1}}
         ])
 
@@ -138,7 +190,7 @@ def nbRttChanges(expIds):
 
     fig.autofmt_xdate()
     plt.grid(True)
-    plt.ylabel("Nb. rtt changes")
+    plt.ylabel("Nb. rtt changes in packets")
     plt.show()
         
     plt.savefig("rttChanges.eps")

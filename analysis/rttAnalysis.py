@@ -15,6 +15,7 @@ import pymongo
 from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
 
+
 def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
     measured and inferred RTTs.
@@ -228,10 +229,7 @@ def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, 
                         "confidenceMean": confidenceMean, "refMean": refMean, "refStd": refStd,
                         "expId": expId}
 
-                if collection is None:
-                    # Write the result to the standard output
-                    print alarm 
-                else:
+                if not collection is None:
                     alarms.append(alarm)
         
         pMean["mean"].append(sn)

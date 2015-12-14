@@ -36,11 +36,28 @@ def connect_mongo(host="mongodb-iijlab", port=27017, db="atlas", username="", pa
 
     return conn[db]
 
-
-
-
-
 # TODO: remove the following:
+
+# from math import sqrt
+
+# def wilsonConfInt(ups, downs):
+    # n = ups + downs
+
+    # if n == 0:
+        # return 0
+
+    # z = 1.0 #1.44 = 85%, 1.96 = 95%
+    # phat = float(ups) / n
+    # return ((phat + z*z/(2*n) - z * sqrt((phat*(1-phat)+z*z/(4*n))/n))/(1+z*z/n))
+
+# from scipy.stats import beta
+
+# def binom_interval(success, total, confint=0.95):
+    # quantile = (1 - confint) / 2.
+    # lower = beta.ppf(quantile, success, total - success + 1)
+    # upper = beta.ppf(1 - quantile, success + 1, total - success)
+    # return (lower, upper)
+
 
 class RingBuffer():
     "A 1D ring buffer using numpy arrays"
