@@ -200,7 +200,7 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
         routesRef = refRoutes[target]
         for ip0, nextHops in routes.iteritems(): 
             nextHopsRef = routesRef[ip0] 
-            allHops = set(["x"])
+            allHops = set(["0"])
             for key in set(nextHops.keys()).union(nextHopsRef.keys()):
                 # Make sure we don't count ip that are not observed in both variables
                 if nextHops[key] or nextHopsRef[key]:

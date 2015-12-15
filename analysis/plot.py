@@ -1,3 +1,4 @@
+import statsmodels.api as sm
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pylab as plt
@@ -61,22 +62,66 @@ def computeRtt( (start, end, ip1, ip2) ):
 
 def plotRttEvolution(res):
 
+    smoothAvg = []
+    smoothHi = []
+    smoothLow = []
+    alarms = []
+    median = []
     mean = []
+    ciLow = []
+    ciHigh = []
     ref = []
     refVar = []
+    dates = []
     start = np.min(res[3])
     end = np.max(res[3])
-    dateRange = [start+timedelta(days=x) for x in range((end-start).days)]
+    diff = end-start
+    dateRange = [start+timedelta(hours=x) for x in range(diff.days*24)]
 
     for d in dateRange:
         ref.append(np.median(res[2][res[3]==d]))
         refVar.append(tools.mad(res[2][res[3]==d]))
-        mean.append(np.mean(res[0][res[1]==d]))
+        dist = res[0][res[1]==d]
+        if not len(dist):
+            continue
+        dates.append(d)
+        median.append(np.median(dist))
+        mean.append(np.mean(dist))
+        dist.sort()
+        wilsonCi = sm.stats.proportion_confint(len(dist)/2, len(dist), 0.01, "wilson")
+        wilsonCi = np.array(wilsonCi)*len(dist)
+        ciLow.append( median[-1] - dist[int(wilsonCi[0])] )
+        ciHigh.append( dist[int(wilsonCi[1])] - median[-1] )
 
-    fig = plt.figure()
+        if not len(smoothAvg):
+            smoothAvg.append(median[-1])
+            smoothHi.append(dist[int(wilsonCi[1])])
+            smoothLow.append(dist[int(wilsonCi[0])])
+        else:
+            smoothAvg.append(0.99*smoothAvg[-1]+0.01*median[-1])
+            smoothHi.append(0.99*smoothHi[-1]+0.01*dist[int(wilsonCi[1])])
+            smoothLow.append(0.99*smoothLow[-1]+0.01*dist[int(wilsonCi[0])])
+
+
+        if median[-1]-ciLow[-1] > 1+smoothHi[-1]:
+            alarms.append(d)
+
+        # if np.min(dist) > 9.0:
+            # print dist
+            # print median[-1]
+            # print  median[-1] - dist[int(wilsonCi[0])] 
+            # print  dist[int(wilsonCi[1])] - median[-1] 
+
+    print len(alarms) 
+
+    fig = plt.figure(figsize=(10,4))
     # plt.fill_between(dateRange, -1*refVar, refVar, "g", lw=1)
-    plt.plot(dateRange, ref, "k", lw=1)
-    plt.plot(dateRange, mean, "r", lw=2)
+    plt.errorbar(dates, median, [ciLow, ciHigh], ecolor='g')
+    plt.plot(dates, smoothAvg, 'r-')
+    plt.plot(dates, smoothHi, 'k--')
+    plt.plot(alarms, [10]*len(alarms), "r*")
+    # plt.plot(dateRange, ref, "k", lw=1)
+    # plt.plot(dateRange, mean, "r", lw=2)
     plt.grid(True)
     fig.autofmt_xdate()
     plt.savefig("rttModel.eps")

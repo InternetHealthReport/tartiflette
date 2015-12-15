@@ -14,7 +14,7 @@ from scipy import stats
 import pymongo
 from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
-
+import statsmodels.api as sm
 
 def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
@@ -177,15 +177,15 @@ def getMedianSamplesMongo(start = datetime(2015, 6, 7, 23, 45),
     return result 
 
 
-def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, ts, 
+def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, 
     collection=None):
 
     alarms = []
     otherParams={}
     metrics = param["metrics"]
-    tau = param["tau"]
-    historySize = param["historySize"]
+    alpha = float(param["alpha"])
     minSamples = param["minSamples"]
+    confInterval = param["confInterval"]
 
     for ipPair, dist in sampleDistributions.iteritems():
 
@@ -193,54 +193,36 @@ def outlierDetection(sampleDistributions, pastMean, pastMeanDiff, param, expId, 
         # Compute the distribution mean
         if n < minSamples:
             continue
-        sn = metrics[0](dist, dtype=np.float64)
+        med = np.median(dist)
+        wilsonCi = sm.stats.proportion_confint(len(dist)/2, len(dist), confInterval, "wilson")
+        wilsonCi = np.array(wilsonCi)*len(dist)
+        dist.sort()
+        currLow = dist[int(wilsonCi[0])]
+        currHi = dist[int(wilsonCi[1])]
 
-        # update past data
-        if ipPair not in pastMean: 
-            pastMean[ipPair] = {"mean": deque(maxlen=historySize), "nbSamp": deque(maxlen=historySize)}
-            pastMeanDiff[ipPair] = deque(maxlen=historySize) 
-
-        pMean = pastMean[ipPair]
-        pMeanDiff = pastMeanDiff[ipPair]
-        if len(pMeanDiff) == historySize:       # if the bootstrap is done
-            pMean = pastMean[ipPair]
-            mu = metrics[1](pMean["mean"])   
-
-            # Estimate parameters for distribution of sqrt(n)*(sn-mu)
-            ref = metrics[1](pMeanDiff)   
-            refMean = np.mean(pMeanDiff)   
-            refVar    = metrics[2](pMeanDiff)*1.4826  # for MAD it should be multiplied by 1.4826
-            refStd    = np.std(pMeanDiff)  # for MAD it should be multiplied by 1.4826
-            boundary = ref + (refVar*tau)
-
-            testPoint = np.sqrt(n)*(sn-mu)
-            # Update pMeanDiff with new value
-            pMeanDiff.append(testPoint)
-
-            if testPoint > boundary:
-                confidence = 0
-                if refVar != 0:
-                    confidence = (testPoint - ref)/refVar
-                    confidenceMean = (testPoint - refMean)/refStd
-
-                alarm = {"timeBin": ts, "ipPair": ipPair, "score": testPoint,
-                        "refBoundary": boundary, "ref":ref, "refVar":refVar, "mu":mu,
-                        "sn": sn, "nbSamples": n, "confidence": confidence,
-                        "confidenceMean": confidenceMean, "refMean": refMean, "refStd": refStd,
-                        "expId": expId}
+        if ipPair in smoothMean: 
+            # detection
+            ref = smoothMean[ipPair]
+    
+            if ref["high"] < currLow:
+                diff = currLow - ref["high"]
+                deviation = diff / (ref["high"]-ref["mean"])
+                alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
+                        "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
+                        "median": med, "nbSamples": n, "deviation": deviation,
+                        "diff": diff, "expId": expId}
 
                 if not collection is None:
                     alarms.append(alarm)
-        
-        pMean["mean"].append(sn)
-        pMean["nbSamp"].append(n)
-
-        if len(pMean["mean"]) >= historySize and len(pMeanDiff) < historySize:
-            # Got all data for bootstrap
-            # compute the past: sqrt(n)*(S_n - \mu)
-            mu = np.median(pMean["mean"])
-            for sn, n in zip(pMean["mean"], pMean["nbSamp"]):
-                pMeanDiff.append(np.sqrt(n)*(sn-mu))
+            
+        # update past data
+        if ipPair not in smoothMean: 
+            smoothMean[ipPair] = {"mean": float(med), "high": float(currHi), 
+                    "low": float(currLow)}  
+        else:
+            smoothMean[ipPair]["mean"] = (1-alpha)*smoothMean[ipPair]["mean"]+alpha*med
+            smoothMean[ipPair]["high"] = (1-alpha)*smoothMean[ipPair]["high"]+alpha*currHi
+            smoothMean[ipPair]["low"] = (1-alpha)*smoothMean[ipPair]["low"]+alpha*currLow
 
 
     # Insert all alarms to the database
@@ -255,17 +237,18 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     # TODO clean this:
-    metrics = [np.mean, np.median, tools.mad] 
+    metrics = [np.median, np.median, tools.mad] 
 
     expParam = {
             "timeWindow": 60*60, # in seconds 
-            "historySize": 24*7,  # 7 days
+            # "historySize": 24*7,  # 7 days
             "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
             "end":   datetime(2015, 7, 1, 8, 0, tzinfo=timezone("UTC")),
             "msmIDs": range(5001,5027),
-            "tau": 3, # multiplied by 1.4826 in outlier detection
+            "alpha": 0.01, # multiplied by 1.4826 in outlier detection
+            "confInterval": 0.01,
             "metrics": str(metrics),
-            "minSamples": 50,
+            "minSamples": 30,
             "experimentDate": datetime.now(),
             }
 
@@ -275,10 +258,8 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     alarmsCollection = db.rttChanges
     expId = detectionExperiments.insert_one(expParam).inserted_id 
 
-    sampleMeanMeasured = {} 
-    sampleMeanInferred = {}
-    meanDiffMeasured = {}
-    meanDiffInferred = {}
+    sampleMedianMeasured = {} 
+    sampleMedianInferred = {}
 
     start = int(time.mktime(expParam["start"].timetuple()))
     end = int(time.mktime(expParam["end"].timetuple()))
@@ -301,9 +282,9 @@ def detectRttChangesMongo(configFile="detection.cfg"):
         measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults)
 
         # Detect oulier values
-        for dist, pastMean, pastMeanDiff in [(measuredRtt, sampleMeanMeasured, meanDiffMeasured),
-                (inferredRtt, sampleMeanInferred, meanDiffInferred)]:
-            outlierDetection(dist, pastMean, pastMeanDiff, expParam, expId, 
+        for dist, smoothMean in [(measuredRtt, sampleMedianMeasured),
+                (inferredRtt, sampleMedianInferred)]:
+            outlierDetection(dist, smoothMean, expParam, expId, 
                     datetime.fromtimestamp(currDate), alarmsCollection)
 
         timeSpent = (time.time()-tsS)
