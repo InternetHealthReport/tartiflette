@@ -25,8 +25,8 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
         return measuredRtt, inferredRtt
 
     ipProbe = "probe_%s"  % trace["prb_id"]
-    ip1 = None
     ip2 = None
+    prevRttList = {}
 
     for hopNb, hop in enumerate(trace["result"]):
         # print "i=%s  and hop=%s" % (hopNb, hop)
@@ -37,7 +37,8 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
 
             if "result" in hop :
 
-                rttList = np.array([np.nan]*len(hop["result"])) 
+                # rttList = np.array([np.nan]*len(hop["result"])) 
+                rttList = {}
                 for resNb, res in enumerate(hop["result"]):
                     if not "from" in res  or tools.isPrivateIP(res["from"]) or not "rtt" in res or res["rtt"] <= 0.0:
                         continue
@@ -47,24 +48,26 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
                     assert hopNb+1==hop["hop"] or hop["hop"]==255 
                     ip2 = res["from"]
                     rtt =  res["rtt"]
-                    rttList[resNb] = rtt
+                    # rttList[resNb] = rtt
+                    rttList[ip2] = rtt
 
                     # measured path
                     if not measuredRtt is None:
                         measuredRtt[(ipProbe, ip2)].append(rtt)
 
                     # Inferred rtt
-                    if not inferredRtt is None and not ip1 is None and not np.all(np.isnan(prevRttList)) and ip1!=ip2:
-                        if (ip2,ip1) in inferredRtt:
-                            inferredRtt[(ip2,ip1)].append(rtt-prevRttAgg)
-                        else:
-                            inferredRtt[(ip1,ip2)].append(rtt-prevRttAgg)
+                    if not inferredRtt is None and len(prevRttList):
+                        for ip1, prevRtt in prevRttList.iteritems():
+                            if ip1 == ip2:
+                                continue
+                            prevRttAgg = np.median(prevRtt)
+                            if (ip2,ip1) in inferredRtt:
+                                inferredRtt[(ip2,ip1)].append(rtt-prevRttAgg)
+                            else:
+                                inferredRtt[(ip1,ip2)].append(rtt-prevRttAgg)
         finally:
             prevRttList = rttList
             # TODO we miss 2 inferred links if a router never replies
-            if not np.all(np.isnan(prevRttList)):
-                prevRttAgg = metric(prevRttList)
-            ip1 = ip2
 
     return measuredRtt, inferredRtt
 
@@ -77,7 +80,7 @@ def processInit():
     global collection
     client = pymongo.MongoClient("mongodb-iijlab",connect=True)
     db = client.atlas
-    collection = db.traceroute
+    collection = db.traceroute_2015_12
 
 def computeRtt( (start, end) ):
     """Read traceroutes from a cursor. Used for multi-processing.
@@ -98,7 +101,7 @@ def computeRtt( (start, end) ):
         nbRow += 1
     timeSpent = time.time()-tsS
     # print("Worker %0.1f /sec., dict size: (%s, %s), mongo time: %s, total time: %s"
-            # % (float(nbRow)/(timeSpent), len(measuredRtt),len(inferredRtt), tsM, timeSpent))
+             # % (float(nbRow)/(timeSpent), len(measuredRtt),len(inferredRtt), tsM, timeSpent))
 
     return measuredRtt, inferredRtt, nbRow
 
@@ -190,7 +193,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts,
     for ipPair, dist in sampleDistributions.iteritems():
 
         n = len(dist) 
-        # Compute the distribution mean
+        # Compute the distribution median
         if n < minSamples:
             continue
         med = np.median(dist)
@@ -204,7 +207,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts,
             # detection
             ref = smoothMean[ipPair]
     
-            if ref["high"] < currLow:
+            if ref["high"] < currLow or ref["low"] > currHi:
                 diff = currLow - ref["high"]
                 deviation = diff / (ref["high"]-ref["mean"])
                 alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
@@ -233,7 +236,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts,
 def detectRttChangesMongo(configFile="detection.cfg"):
 
     nbProcesses = 6
-    binMult = 10
+    binMult = 5
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     # TODO clean this:
@@ -242,14 +245,15 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     expParam = {
             "timeWindow": 60*60, # in seconds 
             # "historySize": 24*7,  # 7 days
-            "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 7, 1, 8, 0, tzinfo=timezone("UTC")),
-            "msmIDs": range(5001,5027),
-            "alpha": 0.01, # multiplied by 1.4826 in outlier detection
-            "confInterval": 0.01,
+            "start": datetime(2015, 11, 15, 23, 45, tzinfo=timezone("UTC")), 
+            "end":   datetime(2015, 12, 7, 0, 0, tzinfo=timezone("UTC")),
+            "alpha": 0.01, 
+            "confInterval": 0.05,
             "metrics": str(metrics),
-            "minSamples": 30,
+            "minSamples": 18,
             "experimentDate": datetime.now(),
+            "collection": "traceroute_2015_12", #TODO implement that part
+            "comment": "use both lower and higher bounds of the confidence interval",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")

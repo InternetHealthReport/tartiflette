@@ -69,7 +69,7 @@ def processInit():
     global collection
     client = pymongo.MongoClient("mongodb-iijlab",connect=True)
     db = client.atlas
-    collection = db.traceroute
+    collection = db.traceroute_2015_12
 
 
 def countRoutes( (start, end) ):
@@ -139,14 +139,14 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
 
     expParam = {
             "timeWindow": 60*60, # in seconds
-            "bootstrapPeriod": 24*7,  # 7 days
-            "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 7, 1, 8, 0, tzinfo=timezone("UTC")),
+            "start": datetime(2015, 11, 15, 23, 45, tzinfo=timezone("UTC")), 
+            "end":   datetime(2015, 12, 7, 0, 0, tzinfo=timezone("UTC")),
             "msmIDs": range(5001,5027),
             "alpha": 0.1, # parameter for exponential smoothing 
             "minCorr": 0.25, # correlation lower than this value will be reported
             "experimentDate": datetime.now(),
-            "minSamples": 150,
+            "minSamples": 90,
+            "collection": "traceroute_2015_12",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
@@ -175,10 +175,9 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
         routes =  pool.imap_unordered(countRoutes, params)
         routes, nbRow = mergeRoutes(routes, currDate, tsS, nbProcesses*binMult)
 
-        if nbIteration > expParam["bootstrapPeriod"]:
-            # Detect route changes
-            routeChangeDetection(routes, refRoutes, expParam, expId, 
-                    datetime.fromtimestamp(currDate), alarmsCollection)
+        # Detect route changes
+        routeChangeDetection(routes, refRoutes, expParam, expId, 
+                datetime.fromtimestamp(currDate), alarmsCollection)
             
         # Update routes reference
         updateReference(refRoutes, routes, expParam["alpha"])
