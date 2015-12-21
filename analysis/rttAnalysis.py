@@ -208,12 +208,19 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts,
             ref = smoothMean[ipPair]
     
             if ref["high"] < currLow or ref["low"] > currHi:
-                diff = currLow - ref["high"]
-                deviation = diff / (ref["high"]-ref["mean"])
+                if med < ref["mean"]:
+                    diff = currHi - ref["low"]
+                    diffMed = med - ref["mean"]
+                    deviation = diff / (ref["low"]-ref["mean"])
+                else:
+                    diff = currLow - ref["high"]
+                    diffMed = med - ref["mean"]
+                    deviation = diff / (ref["high"]-ref["mean"])
+
                 alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
                         "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
                         "median": med, "nbSamples": n, "deviation": deviation,
-                        "diff": diff, "expId": expId}
+                        "diff": diff, "expId": expId, "diffMed": diffMed}
 
                 if not collection is None:
                     alarms.append(alarm)

@@ -60,7 +60,7 @@ def computeRtt( (start, end) ):
     return measuredRtt, inferredRtt, nbRow
 
 ######## used by child processes
-def manyRttEvolution(res, minPts=1200):
+def manyRttEvolution(res, minPts=2000):
     
     nbAlarms = 0
     for k, v in res[0].iteritems():
@@ -88,7 +88,7 @@ def rttEvolution(res, ips):
     for d in dateRange:
         indices = res[1]==d
         dist = res[0][indices]
-        if np.sum(indices) == 0:
+        if np.sum(indices) == 0 or np.sum(dist) < 18:
             continue
         dates.append(d)
         median.append(np.median(dist))
@@ -109,8 +109,8 @@ def rttEvolution(res, ips):
             smoothLow.append(0.99*smoothLow[-1]+0.01*dist[int(wilsonCi[0])])
 
 
-        if median[-1]-ciLow[-1] > 1+smoothHi[-1]:
-            alarms.append(d)
+            if median[-1]-ciLow[-1] > smoothHi[-1] or median[-1]+ciHigh[-1] < smoothLow[-1]: 
+                alarms.append(d)
 
         # if np.min(dist) > 9.0:
             # print dist
@@ -205,8 +205,10 @@ def nbRttChanges(expIds):
     collection = db.rttChanges
     fig = plt.figure(figsize=(10,4))
 
-    for label, filt in [("Measured", {"$regex": re.compile("probe.*")}),
-                        ("Inferred", {"$not": re.compile("probe.*")})]:
+    for label, filt in [
+            # ("Measured", {"$regex": re.compile("probe.*")}),
+            ("Inferred", {"$not": re.compile("probe.*")})
+            ]:
         # for expId in expIds:
         cursor = collection.aggregate([
             {"$project": {
@@ -216,21 +218,29 @@ def nbRttChanges(expIds):
                 "ipPair":1,
                 "timeBin":1,
                 "nbSamples":1,
+                "abs": {
+                        "$cond": [
+                                  { "$lt": ['$deviation', 0] },
+                                        { "$subtract": [0, '$deviation'] }, 
+                                              '$deviation'
+                                                  ]
+                        }
                 # "mag": {"$multiply": ["$nbSamples", "$diff"]}
                 }},
             {"$match": {
-                "expId": objectid.ObjectId("5675143af789374697cbb0d5"), # DNS Root 60min time bin
+                "expId": objectid.ObjectId("567761f8f789370492790ff3"), # DNS Root 60min time bin
+                # "expId": objectid.ObjectId("5675143af789374697cbb0d5"), # DNS Root 60min time bin
                 # "expId": objectid.ObjectId("56711932f78937703ed7df46"), # 60min time bin
                 # "expId": objectid.ObjectId("56711970f78937706117560d"), # 30min time bin
                 # "expId": objectid.ObjectId("566e8dd2f7893720f9089ac9"), # Wrong
                 # median for the inferred rtt
-                "deviation": {"$gt":0}, 
-                "diff": {"$gt":0}, 
+                # "deviation": {"$gt":0}, 
+                # "diff": {"$gt":0}, 
                 "ipPair.0": filt 
                 # "ipPair.0": {"$not": re.compile("probe.*")}
                 }}, 
                 # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
-            {"$group":{"_id": "$timeBin", "count": {"$sum": "$deviation"}}},
+            {"$group":{"_id": "$timeBin", "count": {"$sum": "$abs"}}},
             # {"$group":{"_id": "$timeBin", "count": {"$sum":"$deviation"}}},
             {"$sort": {"_id": 1}}
             ])
@@ -245,7 +255,7 @@ def nbRttChanges(expIds):
         fig.autofmt_xdate()
         plt.legend()
         plt.grid(True)
-        plt.ylabel("Accumulated time difference")
+        plt.ylabel("Accumulated deviation difference")
         plt.yscale("log")
         plt.show()
         
@@ -283,13 +293,15 @@ def nbRouteChanges(expIds):
         # for expId in expIds:
         cursor = collection.aggregate([
             # {"$match": {"dst_ip": dst_ip, "expId": objectid.ObjectId("566e8c41f789371f9038e813") }}, #, "corr": {"$lt": 0.05}}},
-            {"$match": {"dst_ip": dst_ip, "expId": objectid.ObjectId("5675143df7893746b3729fd0") }}, #, "corr": {"$lt": 0.05}}},
+            # {"$match": {"dst_ip": dst_ip, "expId": objectid.ObjectId("5675143df7893746b3729fd0") }}, #, "corr": {"$lt": 0.05}}},
+            {"$match": {"dst_ip": dst_ip, "expId": objectid.ObjectId("56775b72f789370348d58a02"),
+            "corr": {"$lt": 0.05}}},
             # {"$match": {"nbSamples": {"$gt": 500}}},
             # {"$match": {"ip": {"$not": re.compile("probe.*")}}},
             # {"$match": {"expId": objectid.ObjectId(expId), 
                 # "ip": {"$not": re.compile("probe.*")}}}, 
                 # # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
-            {"$group":{"_id": "$timeBin", "count": {"$sum": 1}}},
+            {"$group":{"_id": "$timeBin", "count": {"$sum":1}}},
             {"$sort": {"_id": 1}}
             ])
 
@@ -311,7 +323,7 @@ def nbRouteChanges(expIds):
 
         fig.autofmt_xdate()
         plt.grid(True)
-        plt.ylabel("Nb. rerouted packets")
+        plt.ylabel("Nb. alarms")
         plt.yscale("log")
         plt.legend()
         plt.savefig("routeChange_%s.eps" % dst_ip)

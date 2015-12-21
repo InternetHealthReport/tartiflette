@@ -117,11 +117,14 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
     return mergedRoutes, nbRow
 
 
-def updateReference(refRoutes, newRoutes, alpha):
+def updateReference(refRoutes, newRoutes, alpha, minSamples):
 
     for target, targetRoutes in newRoutes.iteritems():
 
         for ip0, newRoutesIp0 in targetRoutes.iteritems():
+            nbSamples = np.sum(newRoutesIp0.values())
+            if nbSamples < minSamples:
+                continue
             refRoutesIp0 = refRoutes[target][ip0]
             allPeers = set(refRoutesIp0.keys()).union(newRoutesIp0.keys())
 
@@ -145,8 +148,9 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
             "alpha": 0.1, # parameter for exponential smoothing 
             "minCorr": 0.25, # correlation lower than this value will be reported
             "experimentDate": datetime.now(),
-            "minSamples": 90,
+            "minSamples": 18,
             "collection": "traceroute_2015_12",
+            "comment": "use absolute number of packets",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
@@ -180,7 +184,7 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
                 datetime.fromtimestamp(currDate), alarmsCollection)
             
         # Update routes reference
-        updateReference(refRoutes, routes, expParam["alpha"])
+        updateReference(refRoutes, routes, expParam["alpha"], 0) #expParam["minSamples"])
 
         if nbRow>0:
             nbIteration+=1
@@ -207,7 +211,7 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
            
             nbSamples = np.sum(nextHops.values())
             nbSamplesRef = np.sum(nextHopsRef.values())
-            if len(allHops) == 2  or nbSamples < param["minSamples"]:                        
+            if len(allHops) == 2  or nbSamples < param["minSamples"] or nbSamplesRef < param["minSamples"]:                        
                 # only one IP (means no route change) or not enough samples
                 continue
             else:
