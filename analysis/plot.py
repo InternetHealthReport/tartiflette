@@ -199,11 +199,13 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     return (rawRttMeasured, rawRttMeasuredDate, rawRttInferred, rawRttInferredDate  )
 
 
-def nbRttChanges(expIds):
+def nbRttChanges():
 
     db = tools.connect_mongo()
     collection = db.rttChanges
     fig = plt.figure(figsize=(10,4))
+
+    exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
 
     for label, filt in [
             # ("Measured", {"$regex": re.compile("probe.*")}),
@@ -218,6 +220,7 @@ def nbRttChanges(expIds):
                 "ipPair":1,
                 "timeBin":1,
                 "nbSamples":1,
+                "nbProbes":1,
                 "abs": {
                         "$cond": [
                                   { "$lt": ['$deviation', 0] },
@@ -228,7 +231,7 @@ def nbRttChanges(expIds):
                 # "mag": {"$multiply": ["$nbSamples", "$diff"]}
                 }},
             {"$match": {
-                "expId": objectid.ObjectId("567761f8f789370492790ff3"), # DNS Root 60min time bin
+                "expId": exp["_id"], # DNS Root 60min time bin
                 # "expId": objectid.ObjectId("5675143af789374697cbb0d5"), # DNS Root 60min time bin
                 # "expId": objectid.ObjectId("56711932f78937703ed7df46"), # 60min time bin
                 # "expId": objectid.ObjectId("56711970f78937706117560d"), # 30min time bin
@@ -236,7 +239,8 @@ def nbRttChanges(expIds):
                 # median for the inferred rtt
                 # "deviation": {"$gt":0}, 
                 # "diff": {"$gt":0}, 
-                "ipPair.0": filt 
+                "ipPair.0": filt,
+                # "nbProbes": {"$gt": 4},
                 # "ipPair.0": {"$not": re.compile("probe.*")}
                 }}, 
                 # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
