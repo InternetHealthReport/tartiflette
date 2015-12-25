@@ -3,6 +3,7 @@ import itertools
 from datetime import datetime
 from datetime import timedelta
 from pytz import timezone
+import calendar
 import time
 import os
 import json
@@ -161,8 +162,8 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
 
     refRoutes = defaultdict(routeCount)
 
-    start = int(time.mktime(expParam["start"].timetuple()))
-    end = int(time.mktime(expParam["end"].timetuple()))
+    start = int(calendar.timegm(expParam["start"].timetuple()))
+    end = int(calendar.timegm(expParam["end"].timetuple()))
     nbIteration = 0
 
     sys.stderr.write("Route analysis:\n")

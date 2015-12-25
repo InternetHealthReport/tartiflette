@@ -13,6 +13,7 @@ import itertools
 from datetime import datetime
 from datetime import timedelta
 from pytz import timezone
+import calendar
 import time
 import os
 import json
@@ -126,7 +127,7 @@ def rttEvolution(res, ips):
     plt.grid(True)
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
-    plt.savefig("rawData/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarms)))
+    plt.savefig("fig/rawData/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarms)))
     plt.close()
 
     fig = plt.figure()
@@ -135,7 +136,7 @@ def rttEvolution(res, ips):
     # plt.yscale("log")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate() 
-    plt.savefig("rawData/%s_%s_rttRawData.eps" % ips)
+    plt.savefig("fig/rawData/%s_%s_rttRawData.eps" % ips)
     plt.close()
 
     return len(alarms)
@@ -157,8 +158,8 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
             "experimentDate": datetime.now(),
             }
 
-    start = int(time.mktime(expParam["start"].timetuple()))
-    end = int(time.mktime(expParam["end"].timetuple()))
+    start = int(calendar.timegm(expParam["start"].timetuple()))
+    end = int(calendar.timegm(expParam["end"].timetuple()))
 
     rawRttMeasured = defaultdict(list)
     rawRttMeasuredDate = defaultdict(list) 
@@ -263,7 +264,7 @@ def nbRttChanges():
         plt.yscale("log")
         plt.show()
         
-    plt.savefig("rttChanges_wilson.eps")
+    plt.savefig("fig/rttChanges_wilson.eps")
     
     return df
 
@@ -330,7 +331,7 @@ def nbRouteChanges(expIds):
         plt.ylabel("Nb. alarms")
         plt.yscale("log")
         plt.legend()
-        plt.savefig("routeChange_%s.eps" % dst_ip)
+        plt.savefig("fig/routeChange_%s.eps" % dst_ip)
     
 
 def sampleVsShapiro(results):
@@ -360,7 +361,7 @@ def sampleVsShapiro(results):
         plt.xlabel("Shapiro test")
         # plt.legend()
         plt.grid(True)
-        plt.savefig("nbSampleVsShapiro_%s.eps" % label)
+        plt.savefig("fig/nbSampleVsShapiro_%s.eps" % label)
 
 
 
@@ -396,7 +397,7 @@ def cLTMeanVsStd(results):
         minlim = np.max([np.min(xlim),np.min(ylim)])
         maxlim = np.min([np.max(xlim),np.max(ylim)])
         plt.plot([minlim, maxlim], [minlim, maxlim], "--k", lw=2)
-        plt.savefig("CLTMeanVsStd_%s.eps" % label)
+        plt.savefig("fig/CLTMeanVsStd_%s.eps" % label)
 
 
 def cLTMedianVsMad(results):
@@ -434,7 +435,7 @@ def cLTMedianVsMad(results):
         minlim = np.max([np.min(xlim),np.min(ylim)])
         maxlim = np.min([np.max(xlim),np.max(ylim)])
         plt.plot([minlim, maxlim], [minlim, maxlim], "--k")
-        plt.savefig("CLTMedianVsMad_%s.eps" % label)
+        plt.savefig("fig/CLTMedianVsMad_%s.eps" % label)
 
 # def distributionCLTStd(results):
     
@@ -450,7 +451,7 @@ def cLTMedianVsMad(results):
         # plt.grid(True)
         # plt.xscale("log")
         # plt.yscale("log")
-        # plt.savefig("distriutionCLTStd_%s.eps" % label)
+        # plt.savefig("fig/distriutionCLTStd_%s.eps" % label)
 
 # def distributionCLTMean(results):
     
@@ -466,7 +467,7 @@ def cLTMedianVsMad(results):
         # plt.grid(True)
         # plt.xscale("log")
         # plt.yscale("log")
-        # plt.savefig("distriutionCLTMean_%s.eps" % label)
+        # plt.savefig("fig/distriutionCLTMean_%s.eps" % label)
 
 
 def distributionNbSamples(results):
@@ -483,7 +484,7 @@ def distributionNbSamples(results):
         #plt.xscale("log")
         plt.yscale("log")
         plt.title("Mean = %s" % np.mean(data))
-        plt.savefig("distriutionNbSamples_%s.eps" % label)
+        plt.savefig("fig/distriutionNbSamples_%s.eps" % label)
 
 def distributionAvgNbSamples(results):
     
@@ -502,7 +503,7 @@ def distributionAvgNbSamples(results):
         plt.xscale("log")
         plt.yscale("log")
         plt.title("Mean = %s" % np.mean(data))
-        plt.savefig("distriutionAvgNbSamples_%s.eps" % label)
+        plt.savefig("fig/distriutionAvgNbSamples_%s.eps" % label)
 
 def distributionShapiro(results):
 
@@ -521,4 +522,4 @@ def distributionShapiro(results):
         plt.xscale("log")
         plt.xlabel("Shapiro p-value")
         plt.title("Mean = %0.3f" % np.mean(data0))
-        plt.savefig("distriutionShapiro_%s.eps" % label)
+        plt.savefig("fig/distriutionShapiro_%s.eps" % label)

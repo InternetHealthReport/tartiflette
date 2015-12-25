@@ -3,6 +3,7 @@ import itertools
 from datetime import datetime
 from datetime import timedelta
 from pytz import timezone
+import calendar
 import time
 import os
 import json
@@ -16,6 +17,7 @@ from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
 import statsmodels.api as sm
 import cPickle as pickle
+import geoip
 
 def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
@@ -252,8 +254,8 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     sampleMedianMeasured = None 
     sampleMedianInferred = {}
 
-    start = int(time.mktime(expParam["start"].timetuple()))
-    end = int(time.mktime(expParam["end"].timetuple()))
+    start = int(calendar.timegm(expParam["start"].timetuple()))
+    end = int(calendar.timegm(expParam["end"].timetuple()))
     expParam["metrics"] = metrics
 
     for currDate in range(start,end,expParam["timeWindow"]):
@@ -354,8 +356,8 @@ def getMedianSamplesMongo(start = datetime(2015, 6, 7, 23, 45),
     nbSamplesInferred = defaultdict(list)
 
 
-    start = int(time.mktime(start.timetuple()))
-    end = int(time.mktime(end.timetuple()))
+    start = int(calendar.timegm(start.timetuple()))
+    end = int(calendar.timegm(end.timetuple()))
 
     for currDate in range(start,end,timeWindow):
         sys.stderr.write("Analyzing %s " % currDate)
