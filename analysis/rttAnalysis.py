@@ -6,7 +6,6 @@ from pytz import timezone
 import calendar
 import time
 import os
-import json
 import glob
 import numpy as np
 from collections import defaultdict
