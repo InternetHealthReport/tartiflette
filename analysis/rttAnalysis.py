@@ -17,7 +17,8 @@ from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
 import statsmodels.api as sm
 import cPickle as pickle
-import geoip
+import pygeoip
+import socket
 
 def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
@@ -27,7 +28,8 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     if trace is None or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
         return measuredRtt, inferredRtt
 
-    ipProbe = "probe_%s"  % trace["prb_id"]
+    probeId = "probe_%s"  % trace["prb_id"]
+    probeIp = trace["from"]
     ip2 = None
     prevRttList = {}
 
@@ -60,13 +62,13 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
 
                     # measured path
                     if not measuredRtt is None:
-                        if (ipProbe, ip2) in measuredRtt:
-                            m = measuredRtt[(ipProbe, ip2)]
+                        if (probeId, ip2) in measuredRtt:
+                            m = measuredRtt[(probeId, ip2)]
                             m["rtt"].append(rttAgg)
-                            m["probe"].add(ipProbe)
+                            m["probe"].add(probeIp)
                         else:
-                            measuredRtt[(ipProbe, ip2)] = {"rtt": [rttAgg], 
-                                                        "probe": set([ipProbe])}
+                            measuredRtt[(probeId, ip2)] = {"rtt": [rttAgg], 
+                                                        "probe": set([probeIp])}
 
                     # Inferred rtt
                     if not inferredRtt is None and len(prevRttList):
@@ -77,14 +79,14 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
                             if (ip2,ip1) in inferredRtt:
                                 i = inferredRtt[(ip2,ip1)]
                                 i["rtt"].append(rttAgg-prevRttAgg)
-                                i["probe"].add(ipProbe)
+                                i["probe"].add(probeIp)
                             elif (ip1, ip2) in inferredRtt:
                                 i = inferredRtt[(ip1,ip2)]
                                 i["rtt"].append(rttAgg-prevRttAgg)
-                                i["probe"].add(ipProbe)
+                                i["probe"].add(probeIp)
                             else:
                                 inferredRtt[(ip1,ip2)] = {"rtt": [rttAgg-prevRttAgg],
-                                                        "probe": set([ipProbe])}
+                                                        "probe": set([probeIp])}
 
         finally:
             prevRttList = rttList
@@ -95,68 +97,76 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
 
 
 ######## used by child processes
-collection = None
+db = None
 
 def processInit():
-    global collection
+    global db
     client = pymongo.MongoClient("mongodb-iijlab",connect=True)
     db = client.atlas
-    collection = db.traceroute_2015_12
+
 
 def computeRtt( (start, end) ):
     """Read traceroutes from a cursor. Used for multi-processing.
-    """
 
-    tsS = time.time()
+    Assume start and end are less than 24h apart
+    """
+    s = datetime.utcfromtimestamp(start)
+    e = datetime.utcfromtimestamp(end)
+    collectionNames = set(["traceroute_%s_%02d_%02d" % (d.year, d.month, d.day) for d in [s,e]])
+
     nbRow = 0
     measuredRtt = None
     inferredRtt = defaultdict(dict)
-    tsM = time.time()
-    cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
-            projection={"timestamp": 1, "result":1, "prb_id":1} , 
-            cursor_type=pymongo.cursor.CursorType.EXHAUST,
-            batch_size=int(10e6))
-    tsM = time.time() - tsM
-    for trace in cursor: 
-        readOneTraceroute(trace, measuredRtt, inferredRtt)
-        nbRow += 1
-    timeSpent = time.time()-tsS
-    # print("Worker %0.1f /sec., dict size: (%s, %s), mongo time: %s, total time: %s"
-             # % (float(nbRow)/(timeSpent), len(measuredRtt),len(inferredRtt), tsM, timeSpent))
+    for col in collectionNames:
+        collection = db[col]
+        cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
+                projection={"timestamp": 1, "result":1, "prb_id":1, "from":1} , 
+                cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                batch_size=int(10e6))
+        for trace in cursor: 
+            readOneTraceroute(trace, measuredRtt, inferredRtt)
+            nbRow += 1
 
     return measuredRtt, inferredRtt, nbRow
 
 ######## used by child processes
 
-def mergeRttResults(rttResults):
+def mergeRttResults(rttResults, currDate, tsS, nbBins):
 
         measuredRtt = None
         inferredRtt = defaultdict(dict)
         nbRow = 0 
-        for mRtt, iRtt, compRows in rttResults:
+        for i, (mRtt, iRtt, compRows) in enumerate(rttResults):
+            if compRows==0:
+                continue
+
             if not mRtt is None:
                 for k, v in mRtt.iteritems():
                     if k in measuredRtt:
-                        m = measuredRtt[k]
-                        m["rtt"].extend(v["rtt"])
-                        m["probe"].update(v["probe"])
+                        mea = measuredRtt[k]
+                        mea["rtt"].extend(v["rtt"])
+                        mea["probe"].update(v["probe"])
                     else:
                         measuredRtt[k] = v
 
-            for k, v in iRtt.iteritems():
-                if k in inferredRtt:
-                    i = inferredRtt[k]
-                    i["rtt"].extend(v["rtt"])
-                    i["probe"].update(v["probe"])
-                else:
-                    inferredRtt[k] = v
+            if not iRtt is None:
+                for k, v in iRtt.iteritems():
+                    if k in inferredRtt:
+                        inf = inferredRtt[k]
+                        inf["rtt"].extend(v["rtt"])
+                        inf["probe"].update(v["probe"])
+                    else:
+                        inferredRtt[k] = v
 
             nbRow += compRows
+            timeSpent = (time.time()-tsS)
+            sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+                "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
 
         return measuredRtt, inferredRtt, nbRow
 
 
-def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, 
+def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, gi,
     collection=None):
 
     if sampleDistributions is None:
@@ -166,16 +176,28 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts,
     otherParams={}
     metrics = param["metrics"]
     alpha = float(param["alpha"])
-    minProbes= param["minProbes"]
+    minProbes= param["minASN"]
+    minASNEntropy= param["minASNEntropy"]
     confInterval = param["confInterval"]
 
     for ipPair, data in sampleDistributions.iteritems():
 
         dist = data["rtt"]
         nbProbes = len(data["probe"])
+        asn = defaultdict(int)
+        for ip in data["probe"]:
+            try:
+                if not ip in ip2asn:
+                    ip2asn[ip] = str(unicode(gi.asn_by_addr(ip)).partition(" ")[0])
+            except socket.error:
+                print "Unable to find the ASN for this address: "+ip
+                ip2asn[ip] = "Unk"
+            asn[ip2asn[ip]] += 1
+                
+        asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
         n = len(dist) 
         # Compute the distribution median
-        if nbProbes < minProbes:
+        if len(asn) < minProbes or asnEntropy < minASNEntropy:
             continue
         med = np.median(dist)
         wilsonCi = sm.stats.proportion_confint(len(dist)/2, len(dist), confInterval, "wilson")
@@ -201,7 +223,8 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts,
                 alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
                         "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
                         "median": med, "nbSamples": n, "nbProbes": nbProbes, "deviation": deviation,
-                        "diff": diff, "expId": expId, "diffMed": diffMed}
+                        "diff": diff, "expId": expId, "diffMed": diffMed, "probeASN": list(asn),
+                        "nbProbeASN": len(asn)}
 
                 if not collection is None:
                     alarms.append(alarm)
@@ -234,15 +257,15 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     expParam = {
             "timeWindow": 60*60, # in seconds 
             # "historySize": 24*7,  # 7 days
-            "start": datetime(2015, 11, 15, 23, 45, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 12, 7, 0, 0, tzinfo=timezone("UTC")),
+            "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
+            "end":   datetime(2015, 6, 15, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, 
             "confInterval": 0.05,
             "metrics": str(metrics),
-            "minProbes": 5,
+            "minASN": 5,
+            "minASNEntropy": 0.5,
             "experimentDate": datetime.now(),
-            "collection": "traceroute_2015_12", #TODO implement that part
-            "comment": "analyze links only visited by a certain number of probes",
+            "comment": "control probe diversity for each link",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
@@ -253,13 +276,15 @@ def detectRttChangesMongo(configFile="detection.cfg"):
 
     sampleMedianMeasured = None 
     sampleMedianInferred = {}
+    ip2asn = {}
+    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
     expParam["metrics"] = metrics
 
     for currDate in range(start,end,expParam["timeWindow"]):
-        sys.stderr.write("Rtt analysis %s" % datetime.fromtimestamp(currDate))
+        sys.stderr.write("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
         tsS = time.time()
 
         # Get distributions for the current time bin
@@ -272,13 +297,13 @@ def detectRttChangesMongo(configFile="detection.cfg"):
         inferredRtt = defaultdict(dict)
         nbRow = 0 
         rttResults =  pool.imap_unordered(computeRtt, params)
-        measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults)
+        measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults, currDate, tsS, nbProcesses*binMult)
 
         # Detect oulier values
         for dist, smoothMean in [(measuredRtt, sampleMedianMeasured),
                 (inferredRtt, sampleMedianInferred)]:
             outlierDetection(dist, smoothMean, expParam, expId, 
-                    datetime.fromtimestamp(currDate), alarmsCollection)
+                    datetime.utcfromtimestamp(currDate), ip2asn, gi, alarmsCollection)
 
         timeSpent = (time.time()-tsS)
         sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
@@ -296,104 +321,4 @@ def detectRttChangesMongo(configFile="detection.cfg"):
 if __name__ == "__main__":
     # testDateRangeMongo(None,save_to_file=True)
     detectRttChangesMongo()
-
-
-
-#### UNUSED FUNCTIONS #############
-
-def testDateRangeFS(g,start = datetime(2015, 5, 10, 23, 45), 
-        end = datetime(2015, 5, 12, 23, 45), msmIDs = range(5001,5027)):
-
-    timeWindow = timedelta(minutes=30)
-    stats = {"measured":defaultdict(list), "inferred": defaultdict(list)}
-    meanRttMeasured = defaultdict(list)
-    nbSamplesMeasured = defaultdict(list)
-    meanRttInferred = defaultdict(list)
-    nbSamplesInferred = defaultdict(list)
-
-    currDate = start
-    while currDate+timeWindow<end:
-        rttMeasured = defaultdict(list)
-        rttInferred = defaultdict(list)
-        sys.stderr.write("\rTesting %s " % currDate)
-
-        for i, msmId in enumerate(msmIDs):
-
-            if not os.path.exists("../data/%s_msmId%s.json" % (currDate, msmId)):
-                continue
-
-            fi = open("../data/%s_msmId%s.json" % (currDate, msmId) )
-            data = json.load(fi)
-
-            for trace in data:
-                readOneTraceroute(trace, rttMeasured, rttInferred)
-
-        for k, v in rttMeasured.iteritems():
-            meanRttMeasured[k].append(np.median(v))
-            nbSamplesMeasured[k].append(len(v))
-        for k, v in rttInferred.iteritems():
-            meanRttInferred[k].append(np.median(v))
-            nbSamplesInferred[k].append(len(v))
-            
-
-        currDate += timeWindow
-    
-    sys.stderr.write("\n")
-    return meanRttMeasured, meanRttInferred, nbSamplesMeasured, nbSamplesInferred
-
-
-def getMedianSamplesMongo(start = datetime(2015, 6, 7, 23, 45), 
-        end = datetime(2015, 6, 13, 23, 59), msmIDs = range(5001,5027),save_to_file=False):
-
-    nbProcesses = 6
-    binMult = 5 
-    pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
-
-    timeWindow = 30*60  # 30 minutes
-    medianRttMeasured = defaultdict(list)
-    nbSamplesMeasured = defaultdict(list)
-    medianRttInferred = defaultdict(list)
-    nbSamplesInferred = defaultdict(list)
-
-
-    start = int(calendar.timegm(start.timetuple()))
-    end = int(calendar.timegm(end.timetuple()))
-
-    for currDate in range(start,end,timeWindow):
-        sys.stderr.write("Analyzing %s " % currDate)
-        tsS = time.time()
-
-        params = []
-        binEdges = np.linspace(currDate, currDate+timeWindow, nbProcesses*binMult+1)
-        for i in range(nbProcesses*binMult):
-            params.append( (binEdges[i], binEdges[i+1]) )
-
-        measuredRtt = defaultdict(list)
-        inferredRtt = defaultdict(list)
-        nbRow = 0 
-        rttResults =  pool.imap_unordered(computeRtt, params)
-        measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults)
-
-        # Computing samples median
-        for k, v in measuredRtt.iteritems():
-            medianRttMeasured[k].append(np.median(v))
-            nbSamplesMeasured[k].append(len(v))
-        for k, v in inferredRtt.iteritems():
-            medianRttInferred[k].append(np.median(v))
-            nbSamplesInferred[k].append(len(v))
-
-        timeSpent = (time.time()-tsS)
-        sys.stderr.write("Done in %s seconds,  %s row/sec\n" % (timeSpent, float(nbRow)/timeSpent))
-        # readOneTraceroute(trace, rttMeasured, rttInferred)
-    
-    sys.stderr.write("\n")
-    pool.close()
-    pool.join()
-    
-    result = (medianRttMeasured, medianRttInferred, nbSamplesMeasured, nbSamplesInferred)
-    if save_to_file:
-        fp = open("test_1day.json","w")
-        json.dump(result, fp)
-
-    return result 
 

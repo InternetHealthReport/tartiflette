@@ -167,9 +167,9 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     rawRttInferredDate = defaultdict(list) 
 
     for currDate in range(start,end,expParam["timeWindow"]):
-        sys.stderr.write("Rtt analysis %s" % datetime.fromtimestamp(currDate))
+        sys.stderr.write("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
         tsS = time.time()
-        currDatetime = datetime.fromtimestamp(currDate)
+        currDatetime = datetime.utcfromtimestamp(currDate)
 
         # Get distributions for the current time bin
         params = []

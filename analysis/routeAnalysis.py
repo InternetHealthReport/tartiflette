@@ -112,7 +112,7 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
         nbRow += compRows
         timeSpent = (time.time()-tsS)
-        sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.fromtimestamp(currDate),
+        sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
             "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
 
     return mergedRoutes, nbRow
@@ -182,7 +182,7 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
 
         # Detect route changes
         routeChangeDetection(routes, refRoutes, expParam, expId, 
-                datetime.fromtimestamp(currDate), alarmsCollection)
+                datetime.utcfromtimestamp(currDate), alarmsCollection)
             
         # Update routes reference
         updateReference(refRoutes, routes, expParam["alpha"], 0) #expParam["minSamples"])
