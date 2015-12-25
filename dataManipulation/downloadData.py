@@ -4,18 +4,20 @@ from datetime import timedelta
 from ripe.atlas.cousteau import AtlasResultsRequest 
 import json
 import pymongo
+import gzip
 
 # Measurments IDs
-builtinIdv4 = range(5001,5027)
+builtinIdv4 = [5016] #range(5001,5027)
 
 # dates
-start = datetime(2015, 11, 15, 23, 45)
-end = datetime(2015, 12, 6, 23, 45)
-timeWindow = timedelta(minutes=30)
+start = datetime(2015, 10, 14, 0, 0)
+end = datetime(2015, 10, 26, 0, 0)
+timeWindow = timedelta(minutes=60)
 
 errors = []
 
-storage = "mongo"
+# storage = "mongo"
+storage = "fs"
 if storage == "mongo":
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
@@ -25,10 +27,12 @@ for msmId in builtinIdv4:
 
     currDate = start
     while currDate+timeWindow<end:
-
+        path = "../data/%s/%s" % (currDate.year, currDate.month)
         try:
             print("%s:  measurement id %s" % (currDate, msmId) )
-            if os.path.exists("../data/%s_msmId%s.json" % (currDate, msmId)):
+            if not os.path.exists(path):
+                os.makedirs(path)
+            if os.path.exists("%s/%s_msmId%s.json.gz" % (path, currDate, msmId)):
                 continue
 
             kwargs = {
@@ -50,7 +54,7 @@ for msmId in builtinIdv4:
 
                 else:
                     # Output file
-                    fi = open("../data/%s_msmId%s.json" % (currDate, msmId) ,"w")
+                    fi = gzip.open("%s/%s_msmId%s.json.gz" % (path, currDate, msmId) ,"wb")
                     print("Storing data for %s measurement id %s" % (currDate, msmId) )
                     json.dump(results, fi)
                     fi.close()
