@@ -223,7 +223,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
                         "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
                         "median": med, "nbSamples": n, "nbProbes": nbProbes, "deviation": deviation,
                         "diff": diff, "expId": expId, "diffMed": diffMed, "probeASN": list(asn),
-                        "nbProbeASN": len(asn)}
+                        "nbProbeASN": len(asn), "asnEntropy": asnEntropy}
 
                 if not collection is None:
                     alarms.append(alarm)

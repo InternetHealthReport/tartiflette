@@ -7,11 +7,11 @@ import pymongo
 import gzip
 
 # Measurments IDs
-builtinIdv4 = [5016] #range(5001,5027)
+builtinIdv4 = range(5001,5027)
 
 # dates
-start = datetime(2015, 10, 14, 0, 0)
-end = datetime(2015, 10, 26, 0, 0)
+start = datetime(2015, 11, 30, 23, 0)
+end = datetime(2015, 12, 1, 1, 0)
 timeWindow = timedelta(minutes=60)
 
 errors = []
