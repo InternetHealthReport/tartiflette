@@ -224,9 +224,9 @@ def nbRttChanges():
                 "nbProbes":1,
                 "abs": {
                         "$cond": [
-                                  { "$lt": ['$deviation', 0] },
-                                        { "$subtract": [0, '$deviation'] }, 
-                                              '$deviation'
+                                  { "$lt": ['$diff', 0] },
+                                        { "$subtract": [0, '$diff'] }, 
+                                              '$diff'
                                                   ]
                         }
                 # "mag": {"$multiply": ["$nbSamples", "$diff"]}

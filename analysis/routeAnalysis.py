@@ -64,13 +64,12 @@ def readOneTraceroute(trace, routes):
             currIps = []
 
 ######## used by child processes
-collection = None
+db = None
 
 def processInit():
-    global collection
+    global db
     client = pymongo.MongoClient("mongodb-iijlab",connect=True)
     db = client.atlas
-    collection = db.traceroute_2015_12
 
 
 def countRoutes( (start, end) ):
@@ -78,20 +77,21 @@ def countRoutes( (start, end) ):
     """
 
     tsS = time.time()
+    s = datetime.utcfromtimestamp(start)
+    e = datetime.utcfromtimestamp(end)
+    collectionNames = set(["traceroute_%s_%02d_%02d" % (d.year, d.month, d.day) for d in [s,e]])
+
     nbRow = 0
     routes = defaultdict(routeCount)
-    tsM = time.time()
-    cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
-            projection={"timestamp": 1, "result":1, "prb_id":1, "dst_addr":1} , 
-            cursor_type=pymongo.cursor.CursorType.EXHAUST,
-            batch_size=int(10e6))
-    tsM = time.time() - tsM
-    for trace in cursor: 
-        readOneTraceroute(trace, routes)
-        nbRow += 1
-    timeSpent = time.time()-tsS
-    # print("Worker %0.1f /sec.,  mongo time: %s, total time: %s"
-            # % (float(nbRow)/(timeSpent), tsM, timeSpent))
+    for col in collectionNames:
+        collection = db[col]
+        cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
+                projection={"timestamp": 1, "result":1, "prb_id":1, "dst_addr":1} , 
+                cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                batch_size=int(10e6))
+        for trace in cursor: 
+            readOneTraceroute(trace, routes)
+            nbRow += 1
 
     return routes, nbRow
 
@@ -143,14 +143,13 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
 
     expParam = {
             "timeWindow": 60*60, # in seconds
-            "start": datetime(2015, 11, 15, 23, 45, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 12, 7, 0, 0, tzinfo=timezone("UTC")),
+            "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
+            "end":   datetime(2015, 12, 22, 0, 0, tzinfo=timezone("UTC")),
             "msmIDs": range(5001,5027),
-            "alpha": 0.1, # parameter for exponential smoothing 
+            "alpha": 0.01, # parameter for exponential smoothing 
             "minCorr": 0.25, # correlation lower than this value will be reported
             "experimentDate": datetime.now(),
-            "minSamples": 18,
-            "collection": "traceroute_2015_12",
+            "minSamples": 25,
             "comment": "use absolute number of packets",
             }
 

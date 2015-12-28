@@ -18,6 +18,8 @@ import statsmodels.api as sm
 import cPickle as pickle
 import pygeoip
 import socket
+import functools
+import pandas as pd
 
 def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
@@ -257,14 +259,14 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "timeWindow": 60*60, # in seconds 
             # "historySize": 24*7,  # 7 days
             "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 6, 15, 0, 0, tzinfo=timezone("UTC")),
+            "end":   datetime(2015, 12, 22, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, 
             "confInterval": 0.05,
             "metrics": str(metrics),
-            "minASN": 5,
-            "minASNEntropy": 0.5,
+            "minASN": 0,
+            "minASNEntropy": 0.,
             "experimentDate": datetime.now(),
-            "comment": "control probe diversity for each link",
+            "comment": "all data, no diversity check",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
@@ -316,6 +318,92 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             print "Writing %s reference to file system." % (label)
             fi = open("saved_references/%s_%s.pickle" % (expId, label), "w")
             pickle.dump(ref, fi, 2) 
+
+
+def asn_by_addr(ip, db=None):
+    try:
+        return str(unicode(db.asn_by_addr(ip)).partition(" ")[0])
+    except socket.error:
+        return "Unk"
+
+
+import matplotlib.pylab as plt
+def eventCharacterization():
+
+    print "Retrieving Alarms"
+    db = tools.connect_mongo()
+    collection = db.rttChanges
+
+    exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+
+    cursor = collection.aggregate([
+        {"$match": {
+            "expId": exp["_id"], # DNS Root 60min time bin
+            # "nbProbes": {"$gt": 4},
+            }}, 
+        {"$project": {
+            "ipPair":1,
+            "timeBin":1,
+            "nbSamples":1,
+            "nbProbes":1,
+            "diff":1,
+            "deviation": 1,
+            }},
+        {"$unwind": "$ipPair"},
+        ])
+
+    df =  pd.DataFrame(list(cursor))
+    df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+    df.set_index("timeBin")
+
+    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+    fct = functools.partial(asn_by_addr, db=gi)
+
+    # find ASN for each ip
+    df["asn"] = df["ipPair"].apply(fct)
+    df["absDiff"] = df["diff"].apply(np.abs)
+
+    group = df.groupby("timeBin").median()
+    group["metric"] = group["deviation"]
+    events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
+
+    plt.figure()
+    plt.plot(group.index, group["metric"])
+    plt.savefig("tfidf_metric.eps")
+    
+    print "Found %s events" % len(events)
+    print events
+
+    nbDoc = len(df["timeBin"].unique())
+
+    for bin in events.index:
+        maxVal = 0
+        maxLabel = ""
+        print "Event: %s " % bin
+        docLen = len(df[df["timeBin"] == bin])
+        plt.figure()
+        x = []
+
+        for asn in df["asn"].unique():
+
+            tmp = df[df["asn"] == asn]
+            nbDocAsn = float(len(tmp["timeBin"].unique()))
+            asnFreq = float(np.sum(tmp["timeBin"] == bin))
+
+            if nbDocAsn > maxVal:
+                maxVal = nbDocAsn
+                maxLabel = asn
+
+            tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
+            if tfidf > 0.007:
+                print "\t%s, tfidf=%s" % (asn, tfidf)
+                maxVal = tfidf
+                maxLabel = asn
+            x.append(tfidf)
+
+        print "max asn: %s, %s occurences" % (maxLabel, maxVal)
+        plt.hist(x)
+        plt.savefig("tfidf_hist_%s.eps" % bin)
 
 if __name__ == "__main__":
     # testDateRangeMongo(None,save_to_file=True)
