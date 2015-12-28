@@ -405,6 +405,8 @@ def eventCharacterization():
         plt.hist(x)
         plt.savefig("tfidf_hist_%s.eps" % bin)
 
+    return df
+
 if __name__ == "__main__":
     # testDateRangeMongo(None,save_to_file=True)
     detectRttChangesMongo()
