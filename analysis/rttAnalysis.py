@@ -363,7 +363,7 @@ def eventCharacterization():
     df["asn"] = df["ipPair"].apply(fct)
     df["absDiff"] = df["diff"].apply(np.abs)
 
-    group = df.groupby("timeBin").median()
+    group = df.groupby("timeBin").sum()
     group["metric"] = group["deviation"]
     events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
 
