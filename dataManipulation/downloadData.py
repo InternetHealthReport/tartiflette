@@ -7,23 +7,25 @@ import pymongo
 import gzip
 
 # Measurments IDs
-builtinIdv4 = range(5001,5027)
+# builtinIdv4 = range(5001,5027)
+builtinIdv6 = range(6001,6022)
 
 # dates
-start = datetime(2015, 11, 30, 23, 0)
-end = datetime(2015, 12, 1, 1, 0)
+start = datetime(2015, 10, 13, 0, 0)
+end = datetime(2015, 11, 1, 0, 0)
+# end = datetime(2016, 1, 1, 0, 0)
 timeWindow = timedelta(minutes=60)
 
 errors = []
 
 # storage = "mongo"
-storage = "fs"
+storage = "mongo"
 if storage == "mongo":
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
 
 # Get measurments results
-for msmId in builtinIdv4:
+for msmId in builtinIdv6:
 
     currDate = start
     while currDate+timeWindow<end:
@@ -44,20 +46,24 @@ for msmId in builtinIdv4:
 
             is_success, results = AtlasResultsRequest(**kwargs).create()
 
-            if is_success:
-                if storage == "mongo":
-                    collection = "traceroute_%s_%02d_%02d" % (currDate.year, 
-                                                currDate.month, currDate.day)
-                    col = db[collection]
-                    col.insert_many(results)
-                    col.create_index({"timestamp": 1 })       
-
-                else:
+            if is_success :
+                    results = list(results)
+                # else:
                     # Output file
                     fi = gzip.open("%s/%s_msmId%s.json.gz" % (path, currDate, msmId) ,"wb")
                     print("Storing data for %s measurement id %s" % (currDate, msmId) )
                     json.dump(results, fi)
                     fi.close()
+                # if storage == "mongo":
+                    if len(results)==0:
+                        continue
+                    print("Sending data to Mongodb server")
+                    collection = "traceroute6_%s_%02d_%02d" % (currDate.year, 
+                                                currDate.month, currDate.day)
+                    col = db[collection]
+                    col.insert_many(results)
+                    col.create_index("timestamp", background=True)       
+
             else:
                 errors.append("%s: msmId=%s" % (currDate, msmId))
 

@@ -224,19 +224,17 @@ def nbRttChanges():
                 "nbProbes":1,
                 "abs": {
                         "$cond": [
-                                  { "$lt": ['$diff', 0] },
-                                        { "$subtract": [0, '$diff'] }, 
-                                              '$diff'
+                                  { "$lt": ['$deviation', 0] },
+                                        { "$subtract": [0, '$deviation'] }, 
+                                              '$deviation'
                                                   ]
                         }
                 # "mag": {"$multiply": ["$nbSamples", "$diff"]}
                 }},
             {"$match": {
-                "expId": exp["_id"], # DNS Root 60min time bin
-                # "expId": objectid.ObjectId("5675143af789374697cbb0d5"), # DNS Root 60min time bin
-                # "expId": objectid.ObjectId("56711932f78937703ed7df46"), # 60min time bin
-                # "expId": objectid.ObjectId("56711970f78937706117560d"), # 30min time bin
-                # "expId": objectid.ObjectId("566e8dd2f7893720f9089ac9"), # Wrong
+                #"expId": exp["_id"], # DNS Root 60min time bin
+                # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity 
+                "expId": objectid.ObjectId("5680de2af789371baee2d573"), # probe diversity 
                 # median for the inferred rtt
                 # "deviation": {"$gt":0}, 
                 # "diff": {"$gt":0}, 
@@ -264,7 +262,7 @@ def nbRttChanges():
         plt.yscale("log")
         plt.show()
         
-    plt.savefig("fig/rttChanges_wilson.eps")
+    plt.savefig("fig/rttChanges_wilson_dev.eps")
     
     return df
 

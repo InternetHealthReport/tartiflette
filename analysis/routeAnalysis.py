@@ -189,6 +189,9 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
         if nbRow>0:
             nbIteration+=1
 
+    print "Writing route change reference to file system." 
+    fi = open("saved_references/%s_routeChange.pickle" % (expId), "w")
+    pickle.dump(refRoutes, fi, 2) 
     
     sys.stderr.write("\n")
     pool.close()

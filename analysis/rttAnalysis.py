@@ -21,6 +21,8 @@ import socket
 import functools
 import pandas as pd
 
+from bson import objectid
+
 def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
     measured and inferred RTTs.
@@ -338,7 +340,8 @@ def eventCharacterization():
 
     cursor = collection.aggregate([
         {"$match": {
-            "expId": exp["_id"], # DNS Root 60min time bin
+            # "expId": exp["_id"], 
+            "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity 
             # "nbProbes": {"$gt": 4},
             }}, 
         {"$project": {
@@ -367,8 +370,12 @@ def eventCharacterization():
     group["metric"] = group["deviation"]
     events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
 
-    plt.figure()
+    fig = plt.figure()
     plt.plot(group.index, group["metric"])
+    plt.grid(True)
+    plt.yscale("log")
+    plt.ylabel("Accumulated deviation")
+    fig.autofmt_xdate()
     plt.savefig("tfidf_metric.eps")
     
     print "Found %s events" % len(events)
@@ -394,18 +401,33 @@ def eventCharacterization():
                 maxVal = nbDocAsn
                 maxLabel = asn
 
-            tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
-            if tfidf > 0.007:
+            tfidf = asnFreq * np.log(nbDoc/nbDocAsn)
+            # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
+            # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
+            if tfidf > 3:
                 print "\t%s, tfidf=%s" % (asn, tfidf)
                 maxVal = tfidf
                 maxLabel = asn
             x.append(tfidf)
 
-        print "max asn: %s, %s occurences" % (maxLabel, maxVal)
-        plt.hist(x)
-        plt.savefig("tfidf_hist_%s.eps" % bin)
-
+        # print "max asn: %s, %s occurences" % (maxLabel, maxVal)
+        # plt.hist(x)
+        # plt.savefig("tfidf_hist_%s.eps" % bin)
     return df
+
+    for asn in df["asn"].unique():
+        fig = plt.figure()
+        dfasn = df[df["asn"] == asn]
+        grp = dfasn.groupby("timeBin").sum()
+        grp["metric"] = grp["deviation"]
+
+        plt.plot(grp.index, grp["metric"])
+        plt.grid(True)
+        plt.yscale("log")
+        plt.title(asn)
+        fig.autofmt_xdate()
+        plt.savefig("fig/rttChange_asn/%s.eps" % asn)
+
 
 if __name__ == "__main__":
     # testDateRangeMongo(None,save_to_file=True)
