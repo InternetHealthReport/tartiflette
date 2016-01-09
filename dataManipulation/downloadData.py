@@ -6,15 +6,16 @@ import json
 import pymongo
 import gzip
 
-# Measurments IDs
-# builtinIdv4 = range(5001,5027)
-builtinIdv6 = range(6001,6022)
 
 # dates
-start = datetime(2015, 10, 13, 0, 0)
-end = datetime(2015, 11, 1, 0, 0)
+start = datetime(2015, 12, 29, 0, 0)
+end = datetime(2016, 1, 1, 0, 0)
 # end = datetime(2016, 1, 1, 0, 0)
 timeWindow = timedelta(minutes=60)
+
+# Measurments IDs
+builtinIdv4 = range(5001,5027)
+# builtinIdv6 = range(6001,6022)
 
 errors = []
 
@@ -25,7 +26,7 @@ if storage == "mongo":
     db = client.atlas
 
 # Get measurments results
-for msmId in builtinIdv6:
+for msmId in builtinIdv4:
 
     currDate = start
     while currDate+timeWindow<end:
@@ -58,7 +59,8 @@ for msmId in builtinIdv6:
                     if len(results)==0:
                         continue
                     print("Sending data to Mongodb server")
-                    collection = "traceroute6_%s_%02d_%02d" % (currDate.year, 
+                    # collection = "traceroute6_%s_%02d_%02d" % (currDate.year, 
+                    collection = "traceroute_%s_%02d_%02d" % (currDate.year, 
                                                 currDate.month, currDate.day)
                     col = db[collection]
                     col.insert_many(results)

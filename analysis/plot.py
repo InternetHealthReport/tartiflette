@@ -25,6 +25,20 @@ from scipy import stats
 import pymongo
 from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
+import pygeoip
+import functools
+import socket
+
+
+######## tool functions for plotting #########
+
+def ecdf(a, **kwargs):
+    sorted=np.sort( a )
+    yvals=np.arange(len(sorted))/float(len(sorted))
+    plt.plot( sorted, yvals, **kwargs )
+
+
+
 
 ######## used by child processes
 collection = None
@@ -200,69 +214,48 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     return (rawRttMeasured, rawRttMeasuredDate, rawRttInferred, rawRttInferredDate  )
 
 
-def nbRttChanges():
+def nbRttChanges(df=None, suffix="" ):
 
-    db = tools.connect_mongo()
-    collection = db.rttChanges
-    fig = plt.figure(figsize=(10,4))
+    if df is None:
+        db = tools.connect_mongo()
+        collection = db.rttChanges
 
-    exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
-
-    for label, filt in [
-            # ("Measured", {"$regex": re.compile("probe.*")}),
-            ("Inferred", {"$not": re.compile("probe.*")})
-            ]:
+        exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         # for expId in expIds:
-        cursor = collection.aggregate([
-            {"$project": {
-                "expId":1,
-                "deviation":1,
-                "diff":1,
-                "ipPair":1,
-                "timeBin":1,
-                "nbSamples":1,
-                "nbProbes":1,
-                "abs": {
-                        "$cond": [
-                                  { "$lt": ['$deviation', 0] },
-                                        { "$subtract": [0, '$deviation'] }, 
-                                              '$deviation'
-                                                  ]
-                        }
-                # "mag": {"$multiply": ["$nbSamples", "$diff"]}
-                }},
-            {"$match": {
+        cursor = collection.find({ 
                 #"expId": exp["_id"], # DNS Root 60min time bin
-                # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity 
-                "expId": objectid.ObjectId("5680de2af789371baee2d573"), # probe diversity 
-                # median for the inferred rtt
-                # "deviation": {"$gt":0}, 
-                # "diff": {"$gt":0}, 
-                "ipPair.0": filt,
-                # "nbProbes": {"$gt": 4},
-                # "ipPair.0": {"$not": re.compile("probe.*")}
-                }}, 
-                # "ipPair.0": {"$regex": re.compile("probe.*")}}}, 
-            {"$group":{"_id": "$timeBin", "count": {"$sum": "$abs"}}},
-            # {"$group":{"_id": "$timeBin", "count": {"$sum":"$deviation"}}},
-            {"$sort": {"_id": 1}}
+                "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity june 2015 
+                }, 
+            [
+                "timeBin",
+                "deviation",
+                "diff",
+                "ipPair",
+                "timeBin",
+                "nbSamples",
+                "nbProbes",
             ])
 
         df =  pd.DataFrame(list(cursor))
-        df["_id"] = pd.to_datetime(df["_id"],utc=True)
-        df.set_index("_id")
+        df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+        df.set_index("timeBin")
 
-        # plt.plot_date(df["_id"],df["count"],tz=timezone("UTC"))
-        plt.plot(df["_id"],df["count"], label=label)
+    group = df[df["deviation"]>9].groupby("timeBin").sum()
+    group["metric"] = group["deviation"]
 
-        fig.autofmt_xdate()
-        plt.legend()
-        plt.grid(True)
-        plt.ylabel("Accumulated deviation difference")
-        plt.yscale("log")
-        plt.show()
-        
-    plt.savefig("fig/rttChanges_wilson_dev.eps")
+    fig = plt.figure(figsize=(10,4))
+    plt.plot(group.index, group["metric"]) 
+
+    fig.autofmt_xdate()
+    # plt.ylim([10**2, 10**6])
+    plt.grid(True)
+    plt.ylabel("Accumulated deviation")
+    plt.yscale("log")
+    plt.show()
+       
+    if suffix != "":
+        suffix = "_"+suffix
+    plt.savefig("fig/rttChanges_wilson%s.eps" % suffix)
     
     return df
 
@@ -521,3 +514,243 @@ def distributionShapiro(results):
         plt.xlabel("Shapiro p-value")
         plt.title("Mean = %0.3f" % np.mean(data0))
         plt.savefig("fig/distriutionShapiro_%s.eps" % label)
+
+
+def asn_by_addr(ip, db=None):
+    try:
+        return unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")  #.partition(" ")[0]
+    except socket.error:
+        return "Unk"
+
+
+def routeEventCharacterization(df=None):
+# TODO do same for route changes
+    if df is None:
+        print "Retrieving Alarms"
+        db = tools.connect_mongo()
+        collection = db.routeChanges
+
+        exp = db.routeExperiments.find_one({}, sort=[("$natural", -1)] )
+
+        cursor = collection.find( {
+                # "expId": exp["_id"], 
+                "expId": objectid.ObjectId("5680df61f789371d76d2f0d6"), 
+                "corr": {"$lt": 0.0},
+                # "nbProbes": {"$gt": 4},
+            }, 
+            [ 
+                "obsNextHops",
+                "refNextHops",
+                "timeBin",
+                "ip",
+                # "nbSamples":1,
+                # "nbProbes":1,
+                # "diff":1,
+                "corr",
+            # ], limit=300000)
+            ], limit=300000)
+
+        data = {"timeBin":[], "corr": [], "router":[], "label": [], "ip": [], "pktDiff": []} 
+        
+        for row in cursor:
+            obsDict = eval("{"+row["obsNextHops"].partition("{")[2][:-1])
+            refDict = eval("{"+row["refNextHops"].partition("{")[2][:-1])
+            for ip, pkt in obsDict.iteritems():
+                data["router"].append(row["ip"])
+                data["timeBin"].append(row["timeBin"])
+                data["corr"].append(row["corr"])
+                data["ip"].append(ip)
+                pktDiff = pkt - refDict[ip] 
+                if pktDiff < 0:
+                    # link disapering?
+                    data["label"].append("_old")
+                else:
+                    data["label"].append("_new")
+                data["pktDiff"].append(np.abs(pktDiff))
+
+        df =  pd.DataFrame.from_dict(data)
+        df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+        df.set_index("timeBin")
+
+        gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+        fct = functools.partial(asn_by_addr, db=gi)
+
+        # find ASN for each ip
+        df["routerAsn"] = df["router"].apply(fct)
+        df["peerAsn"] = df["ip"].apply(fct)
+        df["asn"] = df["peerAsn"] #TODO add router ASN as well?
+        df["position"] = None
+        df.ix[df["routerAsn"]==df["peerAsn"], ["position"]] = "IN"
+        df.ix[df["routerAsn"]!=df["peerAsn"], ["position"]] = "OUT"
+        df["asn"] += df["peerAsn"] + df["label"] 
+
+    dftmp = df[df["position"] == "_OUT"]
+    group = dftmp.groupby("timeBin").sum()
+    group["metric"] = group["pktDiff"]
+    events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
+
+    fig = plt.figure()
+    plt.plot(group.index, group["metric"])
+    plt.grid(True)
+    plt.yscale("log")
+    plt.ylabel("Accumulated packet diff.")
+    fig.autofmt_xdate()
+    plt.savefig("fig/tfidf_route.eps")
+    
+    print "Found %s events" % len(events)
+    print events
+
+    nbDoc = dftmp["pktDiff"].sum()
+
+    for bin in events.index:
+        maxVal = 0
+        maxLabel = ""
+        print "Event: %s " % bin
+        # docLen = len(df[df["timeBin"] == bin])
+        docLen = np.sum(dftmp[dftmp["timeBin"] == bin]["pktDiff"])
+        plt.figure()
+        x = []
+
+        for asn in dftmp["asn"].unique():
+
+            tmp = dftmp[dftmp["asn"] == asn]
+            nbDocAsn = float(tmp["pktDiff"].sum())
+            asnFreq = float(tmp[tmp["timeBin"] == bin]["pktDiff"].sum())
+
+            if nbDocAsn > maxVal:
+                maxVal = nbDocAsn
+                maxLabel = asn
+
+            tfidf = asnFreq/docLen * np.log((nbDoc/nbDocAsn))
+            # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
+            # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
+            if tfidf > 0.5:
+                print "\t%s, tfidf=%s" % (asn, tfidf)
+                maxVal = tfidf
+                maxLabel = asn
+            x.append(tfidf)
+
+        # print "max asn: %s, %s occurences" % (maxLabel, maxVal)
+        # plt.hist(x)
+        # plt.savefig("tfidf_hist_%s.eps" % bin)
+
+    return df
+
+    for asn in df["asn"].unique():
+        fig = plt.figure()
+        dfasn = df[df["asn"] == asn]
+        grp = dfasn.groupby("timeBin").sum()
+        grp["metric"] = grp["deviation"]
+
+        plt.plot(grp.index, grp["metric"])
+        plt.grid(True)
+        plt.yscale("log")
+        plt.title(asn)
+        plt.ylabel("Accumulated deviation")
+        fig.autofmt_xdate()
+        plt.savefig("fig/rttChange_asn/%s.eps" % asn)
+
+
+
+def rttEventCharacterization(df=None):
+    if df is None:
+        print "Retrieving Alarms"
+        db = tools.connect_mongo()
+        collection = db.rttChanges
+
+        exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+
+        cursor = collection.aggregate([
+            {"$match": {
+                "expId": exp["_id"], 
+                # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
+                # "expId": objectid.ObjectId("5680de2af789371baee2d573"), # probe diversity 
+                # "nbProbes": {"$gt": 4},
+                }}, 
+            {"$project": {
+                "ipPair":1,
+                "timeBin":1,
+                # "nbSamples":1,
+                # "nbProbes":1,
+                # "diff":1,
+                "deviation": 1,
+                }},
+            {"$unwind": "$ipPair"},
+            ])
+
+        df =  pd.DataFrame(list(cursor))
+        df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+        df.set_index("timeBin")
+
+        gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+        fct = functools.partial(asn_by_addr, db=gi)
+
+        # find ASN for each ip
+        df["asn"] = df["ipPair"].apply(fct)
+
+    group = df.groupby("timeBin").sum()
+    group["metric"] = group["deviation"]
+    events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
+
+    fig = plt.figure()
+    plt.plot(group.index, group["metric"])
+    plt.grid(True)
+    plt.yscale("log")
+    plt.ylabel("Accumulated deviation")
+    fig.autofmt_xdate()
+    plt.savefig("tfidf_metric.eps")
+    
+    print "Found %s events" % len(events)
+    print events
+
+    nbDoc = df["deviation"].sum()
+
+    for bin in events.index:
+        maxVal = 0
+        maxLabel = ""
+        print "Event: %s " % bin
+        # docLen = len(df[df["timeBin"] == bin])
+        docLen = np.sum(df[df["timeBin"] == bin]["deviation"])
+        plt.figure()
+        x = []
+
+        for asn in df["asn"].unique():
+
+            tmp = df[df["asn"] == asn]
+            nbDocAsn = float(tmp["deviation"].sum())
+            asnFreq = float(tmp[tmp["timeBin"] == bin]["deviation"].sum())
+
+            if nbDocAsn > maxVal:
+                maxVal = nbDocAsn
+                maxLabel = asn
+
+            tfidf = asnFreq/docLen * np.log((nbDoc/nbDocAsn))
+            # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
+            # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
+            if tfidf > 0.5:
+                print "\t%s, tfidf=%s" % (asn, tfidf)
+                maxVal = tfidf
+                maxLabel = asn
+            x.append(tfidf)
+
+        # print "max asn: %s, %s occurences" % (maxLabel, maxVal)
+        # plt.hist(x)
+        # plt.savefig("tfidf_hist_%s.eps" % bin)
+
+    return df
+
+    for asn in df["asn"].unique():
+        fig = plt.figure()
+        dfasn = df[df["asn"] == asn]
+        grp = dfasn.groupby("timeBin").sum()
+        grp["metric"] = grp["deviation"]
+
+        plt.plot(grp.index, grp["metric"])
+        plt.grid(True)
+        plt.yscale("log")
+        plt.title(asn)
+        plt.ylabel("Accumulated deviation")
+        fig.autofmt_xdate()
+        plt.savefig("fig/rttChange_asn/%s.eps" % asn)
+
+

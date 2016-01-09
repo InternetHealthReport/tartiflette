@@ -16,11 +16,12 @@ import pymongo
 from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
 import pykov
+import cPickle as pickle
 
 
 # type needed for child processes
 def ddType():
-    return defaultdict(int)
+    return defaultdict(float)
 
 def routeCount():
     return defaultdict(ddType)
@@ -72,21 +73,21 @@ def processInit():
     db = client.atlas
 
 
-def countRoutes( (start, end) ):
+def countRoutes( (af, start, end) ):
     """Read traceroutes from a cursor. Used for multi-processing.
     """
 
     tsS = time.time()
     s = datetime.utcfromtimestamp(start)
     e = datetime.utcfromtimestamp(end)
-    collectionNames = set(["traceroute_%s_%02d_%02d" % (d.year, d.month, d.day) for d in [s,e]])
+    collectionNames = set(["traceroute%s_%s_%02d_%02d" % (af, d.year, d.month, d.day) for d in [s,e]])
 
     nbRow = 0
     routes = defaultdict(routeCount)
     for col in collectionNames:
         collection = db[col]
         cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
-                projection={"timestamp": 1, "result":1, "prb_id":1, "dst_addr":1} , 
+                projection={"result":1, "prb_id":1, "dst_addr":1} , 
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 batch_size=int(10e6))
         for trace in cursor: 
@@ -118,22 +119,6 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
     return mergedRoutes, nbRow
 
 
-def updateReference(refRoutes, newRoutes, alpha, minSamples):
-
-    for target, targetRoutes in newRoutes.iteritems():
-
-        for ip0, newRoutesIp0 in targetRoutes.iteritems():
-            nbSamples = np.sum(newRoutesIp0.values())
-            if nbSamples < minSamples:
-                continue
-            refRoutesIp0 = refRoutes[target][ip0]
-            allPeers = set(refRoutesIp0.keys()).union(newRoutesIp0.keys())
-
-            for ip1 in allPeers:
-                newCount = newRoutesIp0[ip1]
-                refRoutesIp0[ip1] = alpha*newCount + (1.0-alpha)*refRoutesIp0[ip1] 
-                assert refRoutesIp0[ip1] >= 0
-
 
 def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file implementation
 
@@ -143,14 +128,14 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
 
     expParam = {
             "timeWindow": 60*60, # in seconds
-            "start": datetime(2015, 5, 31, 23, 45, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 12, 22, 0, 0, tzinfo=timezone("UTC")),
-            "msmIDs": range(5001,5027),
+            "start": datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
+            "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, # parameter for exponential smoothing 
-            "minCorr": 0.25, # correlation lower than this value will be reported
+            "minCorr": 0.25, # correlation scores lower than this value will be reported
+            "minSeen": 3,
+            "af": "6",
             "experimentDate": datetime.now(),
-            "minSamples": 25,
-            "comment": "use absolute number of packets",
+            "comment": "set ref history, and removed min samples",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
@@ -173,7 +158,7 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
         params = []
         binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], nbProcesses*binMult+1)
         for i in range(nbProcesses*binMult):
-            params.append( (binEdges[i], binEdges[i+1]) )
+            params.append( (expParam["af"], binEdges[i], binEdges[i+1]) )
 
         nbRow = 0 
         routes =  pool.imap_unordered(countRoutes, params)
@@ -183,9 +168,6 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
         routeChangeDetection(routes, refRoutes, expParam, expId, 
                 datetime.utcfromtimestamp(currDate), alarmsCollection)
             
-        # Update routes reference
-        updateReference(refRoutes, routes, expParam["alpha"], 0) #expParam["minSamples"])
-
         if nbRow>0:
             nbIteration+=1
 
@@ -198,26 +180,25 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
     pool.join()
     
 
-def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=None, updatePastData=True):
+def routeChangeDetection(newRoutes, refRoutes, param, expId, ts, collection=None):
 
+    alpha = param["alpha"]
     alarms = []
 
-    for target, routes in routesToTest.iteritems():
+    for target, routes in newRoutes.iteritems():
         routesRef = refRoutes[target]
         for ip0, nextHops in routes.iteritems(): 
             nextHopsRef = routesRef[ip0] 
             allHops = set(["0"])
-            for key in set(nextHops.keys()).union(nextHopsRef.keys()):
+            for key in set(nextHops.keys()).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
                 # Make sure we don't count ip that are not observed in both variables
                 if nextHops[key] or nextHopsRef[key]:
                     allHops.add(key)
            
+            reported = False
             nbSamples = np.sum(nextHops.values())
-            nbSamplesRef = np.sum(nextHopsRef.values())
-            if len(allHops) == 2  or nbSamples < param["minSamples"] or nbSamplesRef < param["minSamples"]:                        
-                # only one IP (means no route change) or not enough samples
-                continue
-            else:
+            nbSamplesRef = np.sum([x for x in nextHopsRef.values() if isinstance(x, float)])
+            if len(allHops) > 2  and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= param["minSeen"]: 
                 count = []
                 countRef = []
                 avg = nbSamples 
@@ -226,10 +207,13 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
                     count.append(nextHops[ip1])
                     countRef.append(nextHopsRef[ip1])
 
-                if len(count) > 1: 
+                if len(count) > 1:
+                    if np.std(count) == 0 or np.std(countRef) == 0:
+                        print "%s, %s, %s, %s" % (allHops, countRef, count, nextHopsRef)
                     corr = np.corrcoef(count,countRef)[0][1]
                     if corr < param["minCorr"]:
 
+                        reported = True
                         alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target,
                                 "refNextHops": str(nextHopsRef), "obsNextHops": str(nextHops),
                                 "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count)}
@@ -239,6 +223,21 @@ def routeChangeDetection(routesToTest, refRoutes, param, expId, ts, collection=N
                             print alarm 
                         else:
                             alarms.append(alarm)
+
+            # Update the reference
+            if not "stats" in nextHopsRef:
+                nextHopsRef["stats"] = {"nbSeen":  0, "firstSeen": ts,
+                        "lastSeen": ts, "nbReported": 0}
+
+            if reported:
+                nextHopsRef["stats"]["nbReported"] += 1
+
+            nextHopsRef["stats"]["nbSeen"] += 1
+            nextHopsRef["stats"]["lastSeen"] = ts 
+
+            for ip1 in allHops:
+                newCount = nextHops[ip1]
+                nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
 
     # Insert all alarms to the database
     if alarms and not collection is None:
