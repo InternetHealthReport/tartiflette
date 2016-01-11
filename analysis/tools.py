@@ -1,6 +1,7 @@
 import re
 import numpy as np
 from pymongo import MongoClient
+import string
 
 
 # https://en.wikipedia.org/wiki/Private_network
@@ -13,6 +14,9 @@ def isPrivateIP(ip):
 
     return priv_lo.match(ip) or priv_24.match(ip) or priv_20.match(ip) or priv_16.match(ip)
 
+def str2filename(txt):
+    valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
+    return "".join( c for c in txt if c in valid_chars)
 
 def mad(arr):
     """ Median Absolute Deviation: a "Robust" version of standard deviation.

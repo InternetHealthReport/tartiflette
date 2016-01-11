@@ -129,11 +129,11 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
     expParam = {
             "timeWindow": 60*60, # in seconds
             "start": datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
-            "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
+            "end":   datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, # parameter for exponential smoothing 
             "minCorr": 0.25, # correlation scores lower than this value will be reported
             "minSeen": 3,
-            "af": "6",
+            "af": "",
             "experimentDate": datetime.now(),
             "comment": "set ref history, and removed min samples",
             }
@@ -216,7 +216,8 @@ def routeChangeDetection(newRoutes, refRoutes, param, expId, ts, collection=None
                         reported = True
                         alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target,
                                 "refNextHops": str(nextHopsRef), "obsNextHops": str(nextHops),
-                                "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count)}
+                                "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count),
+                                "nbSeen": nextHopsRef["stats"]["nbSeen"]}
 
                         if collection is None:
                             # Write the result to the standard output

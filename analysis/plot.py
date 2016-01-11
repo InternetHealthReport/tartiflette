@@ -24,7 +24,6 @@ from collections import deque
 from scipy import stats
 import pymongo
 from multiprocessing import Process, JoinableQueue, Manager, Pool
-import tools
 import pygeoip
 import functools
 import socket
@@ -518,7 +517,7 @@ def distributionShapiro(results):
 
 def asn_by_addr(ip, db=None):
     try:
-        return unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")  #.partition(" ")[0]
+        return unicode(db.asn_by_addr(ip)).encode("ascii", "ignore") #.partition(" ")[0]
     except socket.error:
         return "Unk"
 
@@ -648,11 +647,11 @@ def routeEventCharacterization(df=None):
         plt.title(asn)
         plt.ylabel("Accumulated deviation")
         fig.autofmt_xdate()
-        plt.savefig("fig/rttChange_asn/%s.eps" % asn)
+        plt.savefig("fig/routeChange_asn/%s.eps" % asn)
 
 
 
-def rttEventCharacterization(df=None):
+def rttEventCharacterization(df=None, plotAsnData=False):
     if df is None:
         print "Retrieving Alarms"
         db = tools.connect_mongo()
@@ -663,6 +662,7 @@ def rttEventCharacterization(df=None):
         cursor = collection.aggregate([
             {"$match": {
                 "expId": exp["_id"], 
+                "nbSeen": {"$gt": 6},
                 # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
                 # "expId": objectid.ObjectId("5680de2af789371baee2d573"), # probe diversity 
                 # "nbProbes": {"$gt": 4},
@@ -670,6 +670,8 @@ def rttEventCharacterization(df=None):
             {"$project": {
                 "ipPair":1,
                 "timeBin":1,
+                "refMean":1,
+
                 # "nbSamples":1,
                 # "nbProbes":1,
                 # "diff":1,
@@ -690,7 +692,7 @@ def rttEventCharacterization(df=None):
 
     group = df.groupby("timeBin").sum()
     group["metric"] = group["deviation"]
-    events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
+    events = group[group["metric"]> group["metric"].median()+2*group["metric"].mad()]
 
     fig = plt.figure()
     plt.plot(group.index, group["metric"])
@@ -724,10 +726,10 @@ def rttEventCharacterization(df=None):
                 maxVal = nbDocAsn
                 maxLabel = asn
 
-            tfidf = asnFreq/docLen * np.log((nbDoc/nbDocAsn))
+            tfidf = asnFreq/docLen * np.log(1 + (nbDoc/nbDocAsn))
             # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
             # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
-            if tfidf > 0.5:
+            if tfidf > 0.4:
                 print "\t%s, tfidf=%s" % (asn, tfidf)
                 maxVal = tfidf
                 maxLabel = asn
@@ -737,20 +739,21 @@ def rttEventCharacterization(df=None):
         # plt.hist(x)
         # plt.savefig("tfidf_hist_%s.eps" % bin)
 
+    if plotAsnData:
+        for asn in df["asn"].unique():
+            fig = plt.figure()
+            dfasn = df[df["asn"] == asn]
+            grp = dfasn.groupby("timeBin").sum()
+            grp["metric"] = grp["deviation"]
+
+            plt.plot(grp.index, grp["metric"])
+            plt.grid(True)
+            plt.yscale("log")
+            plt.title(asn)
+            plt.ylabel("Accumulated deviation")
+            fig.autofmt_xdate()
+            plt.savefig("fig/rttChange_asn/"+tools.str2filename("%s.eps" % asn))
+            plt.close()
+
     return df
-
-    for asn in df["asn"].unique():
-        fig = plt.figure()
-        dfasn = df[df["asn"] == asn]
-        grp = dfasn.groupby("timeBin").sum()
-        grp["metric"] = grp["deviation"]
-
-        plt.plot(grp.index, grp["metric"])
-        plt.grid(True)
-        plt.yscale("log")
-        plt.title(asn)
-        plt.ylabel("Accumulated deviation")
-        fig.autofmt_xdate()
-        plt.savefig("fig/rttChange_asn/%s.eps" % asn)
-
 

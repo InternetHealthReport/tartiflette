@@ -184,7 +184,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
     alarms = []
     otherParams={}
     alpha = float(param["alpha"])
-    minProbes= param["minASN"]
+    minAsn= param["minASN"]
     minASNEntropy= param["minASNEntropy"]
     confInterval = param["confInterval"]
     minSeen = param["minSeen"]
@@ -206,7 +206,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
         asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
         n = len(dist) 
         # Compute the distribution median
-        if len(asn) < minProbes or asnEntropy < minASNEntropy:
+        if len(asn) < minAsn or asnEntropy < minASNEntropy:
             continue
         med = np.median(dist)
         wilsonCi = sm.stats.proportion_confint(len(dist)/2, len(dist), confInterval, "wilson")
@@ -225,16 +225,19 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
                     diff = currHi - ref["low"]
                     diffMed = med - ref["mean"]
                     deviation = diffMed / (ref["low"]-ref["mean"])
+                    devBound = diff / (ref["low"]-ref["mean"])
                 else:
                     diff = currLow - ref["high"]
                     diffMed = med - ref["mean"]
                     deviation = diffMed / (ref["high"]-ref["mean"])
+                    devBound = diff / (ref["high"]-ref["mean"])
 
                 alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
                         "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
                         "median": med, "nbSamples": n, "nbProbes": nbProbes, "deviation": deviation,
                         "diff": diff, "expId": expId, "diffMed": diffMed, "probeASN": list(asn),
-                        "nbProbeASN": len(asn), "asnEntropy": asnEntropy}
+                        "nbProbeASN": len(asn), "asnEntropy": asnEntropy, "nbSeen": ref["nbSeen"],
+                        "devBound": devBound}
 
                 reported = True
 
@@ -243,7 +246,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
             
             # update reference
             ref["nbSeen"] += 1
-            if ref["seen"] < minSeen:               # still in the bootstrap
+            if ref["nbSeen"] < minSeen:               # still in the bootstrap
                 ref["mean"].append(med)
                 ref["high"].append(currHi)
                 ref["low"].append(currLow)
@@ -261,8 +264,13 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
                 ref["nbReported"] += 1
         else:
             # add new ref
-            smoothMean[ipPair] = {"mean": [med], "high": [currHi], 
+            if minSeen > 1:
+                smoothMean[ipPair] = {"mean": [med], "high": [currHi], 
                     "low": [currLow], "probe": set(data["probe"]), "firstSeen":ts,
+                    "lastSeen":ts, "nbSeen":1, "nbReported": 0 }  
+            else:
+                smoothMean[ipPair] = {"mean": float(med), "high": float(currHi), 
+                    "low": float(currLow), "probe": set(data["probe"]), "firstSeen":ts,
                     "lastSeen":ts, "nbSeen":1, "nbReported": 0 }  
 
 
@@ -273,7 +281,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
 
 def detectRttChangesMongo(configFile="detection.cfg"):
 
-    nbProcesses = 6 
+    nbProcesses = 8 
     binMult = 2 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
@@ -285,12 +293,12 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, 
             "confInterval": 0.05,
-            "minASN": 3,
-            "minASNEntropy": 0.5,
-            "minSeen": 3,
+            "minASN": 1,
+            "minASNEntropy": 0.0,
+            "minSeen": 1,
             "experimentDate": datetime.now(),
             "af": "",
-            "comment": "reference history, diversity check",
+            "comment": "lowest parameters to check parameter sensitivity",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
