@@ -782,7 +782,7 @@ def rttRefStats(ref=None):
     print "\t min=%s max=%s" % (np.min(confSize), np.max(confSize))
 
 
-    plt.figure()
+    plt.figure(figsize=(4,3))
     # plt.hist(confSize,bins=50, log=True)
     ecdf(confSize, label="interval size")
     ecdf(confDown, label="lower bound")
@@ -793,6 +793,7 @@ def rttRefStats(ref=None):
     plt.legend()
     plt.xlim([10**-4, 10**4])
     plt.xlabel("Confidence interval size")
+    plt.tight_layout()
     plt.savefig("fig/rttChange_ref_confInterval.eps")
 
     ### Number of probes
@@ -801,13 +802,14 @@ def rttRefStats(ref=None):
     print "total number of probes: %s (+- %s) median" % (np.median(nbProbes), tools.mad(nbProbes))
     print "\t min=%s max=%s" % (np.min(nbProbes), np.max(nbProbes))
 
-    plt.figure()
+    plt.figure(figsize=(4,3))
     # plt.hist(nbProbes,bins=50, log=True)
     ecdf(nbProbes)
     plt.xscale("log")
     # plt.yscale("log")
     plt.grid(True)
     plt.xlabel("Number of probes")
+    plt.tight_layout()
     plt.savefig("fig/rttChange_ref_nbProbes.eps")
     plt.close()
 
@@ -823,23 +825,85 @@ def rttRefStats(ref=None):
     #### Number of times seen / reported
     nbSeen = np.array([x["nbSeen"] for x in ref.itervalues()])
     nbReported = np.array([x["nbReported"] for x in ref.itervalues()])
-    obsPeriod = np.array([(x["lastSeen"]-x["firstSeen"]).total_seconds() / 3600 for x in ref.itervalues()])
+    obsPeriod = np.array([1+(x["lastSeen"]-x["firstSeen"]).total_seconds() / 3600 for x in ref.itervalues()])
     
-    plt.figure()
+    plt.figure(figsize=(4,3))
     ecdf(nbSeen)
     plt.grid(True)
     plt.xlabel("# observations per link")
+    plt.xscale("log")
+    plt.tight_layout()
     plt.savefig("fig/rttChange_ref_nbSeen.eps")
+    plt.close()
 
-    plt.figure()
+    plt.figure(figsize=(4,3))
     ecdf(nbReported)
     plt.grid(True)
     plt.xscale("log")
     plt.xlabel("# reports per link")
+    plt.tight_layout()
     plt.savefig("fig/rttChange_ref_nbReported.eps")
+    plt.close()
 
-    plt.figure()
-    ecdf(nbSeen/obsPeriod)
+    plt.figure(figsize=(4,3))
+    ecdf(obsPeriod)
+    plt.grid(True)
+    plt.xscale("log")
+    plt.xlabel("Observation period per link")
+    plt.tight_layout()
+    plt.savefig("fig/rttChange_ref_obsPeriod.eps")
+    plt.close()
+
+    plt.figure(figsize=(4,3))
+    for bound in [(0, 3*24, "< 3days"), (3*24, 7*24, "< 1week"), (7*24, 30*24, "< 1month")]:
+        n = nbSeen[(obsPeriod>=bound[0]) & (obsPeriod<bound[1])]
+        o = obsPeriod[(obsPeriod>=bound[0]) & (obsPeriod<bound[1])]
+        print "%s : %s pairs, mean=%s, median=%s" %(bound, len(n), np.mean(n/o), np.median(n/o))
+        ecdf(n/o, label=bound[2])
     plt.grid(True)
     plt.xlabel("Observation ratio per link")
+    plt.xlim([-0.1, 1.1])
+    # plt.legend()
+    plt.tight_layout()
+    plt.savefig("fig/rttChange_ref_obsRatio_breakdown.eps")
+    plt.close()
+
+    plt.figure(figsize=(4,3))
+    ecdf(nbSeen/obsPeriod)
+    plt.plot([1/16., 1/16.], [0, 1])
+    plt.plot([2/16., 2/16.], [0, 1])
+    plt.plot([4/16., 4/16.], [0, 1])
+    plt.plot([8/16., 8/16.], [0, 1])
+    plt.grid(True)
+    plt.xlabel("Observation ratio per link")
+    plt.xlim([-0.1, 1.1])
+    # plt.legend()
+    plt.tight_layout()
     plt.savefig("fig/rttChange_ref_obsRatio.eps")
+    plt.close()
+
+    fig  = plt.figure(figsize=(10,4))
+    data = defaultdict(int)
+    for v in ref.itervalues():
+        data[v["firstSeen"]] += 1 
+    plt.plot(data.keys(), data.values(), "+")
+    plt.ylim([0, 500])
+    plt.grid(True)
+    fig.autofmt_xdate()
+    plt.ylabel("Number of new links")
+    plt.tight_layout()
+    plt.savefig("fig/rttChange_ref_newLinks.eps")
+    plt.close()
+
+    fig  = plt.figure(figsize=(10,4))
+    data = defaultdict(int)
+    for v in ref.itervalues():
+        data[v["lastSeen"]] += 1 
+    plt.plot(data.keys(), data.values(), "+")
+    plt.ylim([0, 500])
+    plt.grid(True)
+    fig.autofmt_xdate()
+    plt.ylabel("Number of links last seen")
+    plt.tight_layout()
+    plt.savefig("fig/rttChange_ref_endLinks.eps")
+    plt.close()
