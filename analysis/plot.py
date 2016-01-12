@@ -757,3 +757,89 @@ def rttEventCharacterization(df=None, plotAsnData=False):
 
     return df
 
+def rttRefStats(ref=None):
+    """ Print RTT change reference properties 
+
+    """
+    if ref is None:
+        # ref = pickle.load(open("./saved_references/567f808ff7893768932b8334_inferred.pickle"))
+        # ref = pickle.load(open("./saved_references/5680de2af789371baee2d573_inferred.pickle"))
+        ref = pickle.load(open("./saved_references/5690b974f789370712b97cb4_inferred.pickle"))
+
+    print "%s ip pairs" % len(ref)
+ 
+    #### confidence intervals
+    confUp = map(lambda x: x["high"] - x["mean"], ref.itervalues())
+    confDown = map(lambda x: x["mean"] - x["low"], ref.itervalues())
+    confSize = map(lambda x: x["high"] - x["low"], ref.itervalues())
+
+    print "upper confidence interval size: %s (+- %s)" % (np.mean(confUp), np.std(confUp))
+    print "\t min=%s max=%s" % (np.min(confUp), np.max(confUp))
+    print "lower confidence interval size: %s (+- %s)" % (np.mean(confDown), np.std(confDown))
+    print "\t min=%s max=%s" % (np.min(confDown), np.max(confDown))
+    print "confidence interval size: %s (+- %s)" % (np.mean(confSize), np.std(confSize))
+    print "confidence interval size: %s (+- %s) median" % (np.median(confSize), tools.mad(confSize))
+    print "\t min=%s max=%s" % (np.min(confSize), np.max(confSize))
+
+
+    plt.figure()
+    # plt.hist(confSize,bins=50, log=True)
+    ecdf(confSize, label="interval size")
+    ecdf(confDown, label="lower bound")
+    ecdf(confUp, label="upper bound")
+    plt.xscale("log")
+    # plt.yscale("log")
+    plt.grid(True)
+    plt.legend()
+    plt.xlim([10**-4, 10**4])
+    plt.xlabel("Confidence interval size")
+    plt.savefig("fig/rttChange_ref_confInterval.eps")
+
+    ### Number of probes
+    nbProbes = map(lambda x: len(x["probe"]), ref.itervalues())
+    print "total number of probes: %s (+- %s)" % (np.mean(nbProbes), np.std(nbProbes))
+    print "total number of probes: %s (+- %s) median" % (np.median(nbProbes), tools.mad(nbProbes))
+    print "\t min=%s max=%s" % (np.min(nbProbes), np.max(nbProbes))
+
+    plt.figure()
+    # plt.hist(nbProbes,bins=50, log=True)
+    ecdf(nbProbes)
+    plt.xscale("log")
+    # plt.yscale("log")
+    plt.grid(True)
+    plt.xlabel("Number of probes")
+    plt.savefig("fig/rttChange_ref_nbProbes.eps")
+    plt.close()
+
+    # correlation between the number of probes and the conf. interval size?
+
+    confSize = np.array(confSize)
+    idx0 = (confSize < 30000000)
+    nbProbes = np.array(nbProbes)
+    idx1 = (nbProbes < 65000000000)
+    print np.corrcoef(confSize[idx0 & idx1], nbProbes[idx0 & idx1])
+    print stats.spearmanr(confSize[idx0 & idx1], nbProbes[idx0 & idx1])
+
+    #### Number of times seen / reported
+    nbSeen = np.array([x["nbSeen"] for x in ref.itervalues()])
+    nbReported = np.array([x["nbReported"] for x in ref.itervalues()])
+    obsPeriod = np.array([(x["lastSeen"]-x["firstSeen"]).total_seconds() / 3600 for x in ref.itervalues()])
+    
+    plt.figure()
+    ecdf(nbSeen)
+    plt.grid(True)
+    plt.xlabel("# observations per link")
+    plt.savefig("fig/rttChange_ref_nbSeen.eps")
+
+    plt.figure()
+    ecdf(nbReported)
+    plt.grid(True)
+    plt.xscale("log")
+    plt.xlabel("# reports per link")
+    plt.savefig("fig/rttChange_ref_nbReported.eps")
+
+    plt.figure()
+    ecdf(nbSeen/obsPeriod)
+    plt.grid(True)
+    plt.xlabel("Observation ratio per link")
+    plt.savefig("fig/rttChange_ref_obsRatio.eps")

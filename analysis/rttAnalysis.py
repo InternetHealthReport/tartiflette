@@ -78,11 +78,9 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
                             if ip1 == ip2:
                                 continue
 
-                            if (ip2,ip1) in inferredRtt:
-                                i = inferredRtt[(ip2,ip1)]
-                                i["rtt"].append(rttAgg-pRttAgg)
-                                i["probe"].add(probeIp)
-                            elif (ip1, ip2) in inferredRtt:
+                            # data for (ip1, ip2) and (ip2, ip1) are put
+                            # together in mergeRttResults
+                            if (ip1, ip2) in inferredRtt:
                                 i = inferredRtt[(ip1,ip2)]
                                 i["rtt"].append(rttAgg-pRttAgg)
                                 i["probe"].add(probeIp)
@@ -142,30 +140,23 @@ def computeRtt( (af, start, end, skip, limit) ):
 
 def mergeRttResults(rttResults, currDate, tsS, nbBins):
 
-        measuredRtt = None
         inferredRtt = defaultdict(dict)
         nbRow = 0 
         for i, (mRtt, iRtt, compRows) in enumerate(rttResults):
             if compRows==0:
                 continue
 
-            if not mRtt is None:
-                for k, v in mRtt.iteritems():
-                    if k in measuredRtt:
-                        mea = measuredRtt[k]
-                        mea["rtt"].extend(v["rtt"])
-                        mea["probe"].update(v["probe"])
-                    else:
-                        measuredRtt[k] = v
-
             if not iRtt is None:
                 for k, v in iRtt.iteritems():
-                    if k in inferredRtt:
-                        inf = inferredRtt[k]
+
+                    # put together data for (ip1, ip2) and (ip2, ip1)
+                    ipPair = sorted(k)
+                    if ipPair in inferredRtt:
+                        inf = inferredRtt[ipPair]
                         inf["rtt"].extend(v["rtt"])
                         inf["probe"].update(v["probe"])
                     else:
-                        inferredRtt[k] = v
+                        inferredRtt[ipPair] = v
 
             nbRow += compRows
             timeSpent = (time.time()-tsS)
@@ -357,80 +348,6 @@ def detectRttChangesMongo(configFile="detection.cfg"):
 
 
 
-def refStats(ref=None):
-
-    if ref is None:
-        # ref = pickle.load(open("./saved_references/567f808ff7893768932b8334_inferred.pickle"))
-        ref = pickle.load(open("./saved_references/5680de2af789371baee2d573_inferred.pickle"))
-
-    print "%s ip pairs" % len(ref)
-
-    confUp = map(lambda x: x["high"] - x["mean"], ref.itervalues())
-    confDown = map(lambda x: x["mean"] - x["low"], ref.itervalues())
-    confSize = map(lambda x: x["high"] - x["low"], ref.itervalues())
-
-    print "upper confidence interval size: %s (+- %s)" % (np.mean(confUp), np.std(confUp))
-    print "\t min=%s max=%s" % (np.min(confUp), np.max(confUp))
-    print "lower confidence interval size: %s (+- %s)" % (np.mean(confDown), np.std(confDown))
-    print "\t min=%s max=%s" % (np.min(confDown), np.max(confDown))
-    print "confidence interval size: %s (+- %s)" % (np.mean(confSize), np.std(confSize))
-    print "confidence interval size: %s (+- %s) median" % (np.median(confSize), tools.mad(confSize))
-    print "\t min=%s max=%s" % (np.min(confSize), np.max(confSize))
-
-    # plot.plt.figure()
-    # # plot.plt.hist(confUp, bins=50, log=True)
-    # plot.ecdf(confUp)
-    # plot.plt.xscale("log")
-    # # plot.plt.yscale("log")
-    # plot.plt.grid(True)
-    # plot.plt.xlabel("Confidence interval size (high)")
-    # plot.plt.savefig("fig/rttChange_ref_confIntervalHigh.eps")
-
-    # plot.plt.figure()
-    # # plt.hist(confDown,bins=50, log=True)
-    # plot.ecdf(confDown)
-    # plot.plt.xscale("log")
-    # # plot.plt.yscale("log")
-    # plot.plt.grid(True)
-    # plot.plt.xlabel("Confidence interval size (low)")
-    # plot.plt.savefig("fig/rttChange_ref_confIntervalLow.eps")
-
-    plot.plt.figure()
-    # plot.plt.hist(confSize,bins=50, log=True)
-    plot.ecdf(confSize, label="interval size")
-    plot.ecdf(confDown, label="lower bound")
-    plot.ecdf(confUp, label="upper bound")
-    plot.plt.xscale("log")
-    # plot.plt.yscale("log")
-    plot.plt.grid(True)
-    plot.plt.legend()
-    plot.plt.xlim([10**-4, 10**4])
-    plot.plt.xlabel("Confidence interval size")
-    plot.plt.savefig("fig/rttChange_ref_confInterval.eps")
-
-    nbProbes = map(lambda x: len(x["probe"]), ref.itervalues())
-    print "total number of probes: %s (+- %s)" % (np.mean(nbProbes), np.std(nbProbes))
-    print "total number of probes: %s (+- %s) median" % (np.median(nbProbes), tools.mad(nbProbes))
-    print "\t min=%s max=%s" % (np.min(nbProbes), np.max(nbProbes))
-
-    plot.plt.figure()
-    # plot.plt.hist(nbProbes,bins=50, log=True)
-    plot.ecdf(nbProbes)
-    plot.plt.xscale("log")
-    # plot.plt.yscale("log")
-    plot.plt.grid(True)
-    plot.plt.xlabel("Number of probes")
-    plot.plt.savefig("fig/rttChange_ref_nbProbes.eps")
-    plot.plt.close()
-
-    # correlation between the number of probes and the conf. interval size?
-
-    confSize = np.array(confSize)
-    idx0 = (confSize < 30000000)
-    nbProbes = np.array(nbProbes)
-    idx1 = (nbProbes < 65000000000)
-    print np.corrcoef(confSize[idx0 & idx1], nbProbes[idx0 & idx1])
-    print stats.spearmanr(confSize[idx0 & idx1], nbProbes[idx0 & idx1])
 
 
 if __name__ == "__main__":
