@@ -281,24 +281,24 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
 
 def detectRttChangesMongo(configFile="detection.cfg"):
 
-    nbProcesses = 8 
-    binMult = 2 # number of bins = binMult*nbProcesses 
+    nbProcesses = 6 
+    binMult = 4 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     expParam = {
             "timeWindow": 60*60, # in seconds 
             # "historySize": 24*7,  # 7 days
             "start": datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
-            # "end":   datetime(2015, 12, 22, 0, 0, tzinfo=timezone("UTC")),
-            "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
-            "alpha": 0.01, 
+            "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
+            # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
+            "alpha": 0.5, 
             "confInterval": 0.05,
-            "minASN": 1,
-            "minASNEntropy": 0.0,
-            "minSeen": 1,
+            "minASN": 3,
+            "minASNEntropy": 0.5,
+            "minSeen": 3,
             "experimentDate": datetime.now(),
             "af": "",
-            "comment": "lowest parameters to check parameter sensitivity",
+            "comment": "60 min all data",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
@@ -323,6 +323,9 @@ def detectRttChangesMongo(configFile="detection.cfg"):
         c = datetime.utcfromtimestamp(currDate)
         col = "traceroute%s_%s_%02d_%02d" % (expParam["af"], c.year, c.month, c.day) 
         totalRows = db[col].count({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}})
+        if not totalRows:
+            print "No data for that time bin!"
+            continue
         params = []
         limit = int(totalRows/(nbProcesses*binMult-1))
         skip = range(0, totalRows, limit)

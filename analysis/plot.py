@@ -651,18 +651,21 @@ def routeEventCharacterization(df=None):
 
 
 
-def rttEventCharacterization(df=None, plotAsnData=False):
+def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
     if df is None:
         print "Retrieving Alarms"
         db = tools.connect_mongo()
         collection = db.rttChanges
 
         exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        print "Looking at experiment: %s" % exp["_id"]
 
         cursor = collection.aggregate([
             {"$match": {
+                # "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 "expId": exp["_id"], 
-                "nbSeen": {"$gt": 6},
+                # "nbProbeASN": {"$gt": 2},
+                # "asnEntropy": {"$gt": 0.5},
                 # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
                 # "expId": objectid.ObjectId("5680de2af789371baee2d573"), # probe diversity 
                 # "nbProbes": {"$gt": 4},
@@ -671,11 +674,14 @@ def rttEventCharacterization(df=None, plotAsnData=False):
                 "ipPair":1,
                 "timeBin":1,
                 "refMean":1,
-
+                "nbSeen":1,
+                "nbProbes":1,
+                "entropy":1,
                 # "nbSamples":1,
                 # "nbProbes":1,
                 # "diff":1,
                 "deviation": 1,
+                "devBound": 1,
                 }},
             {"$unwind": "$ipPair"},
             ])
@@ -691,8 +697,8 @@ def rttEventCharacterization(df=None, plotAsnData=False):
         df["asn"] = df["ipPair"].apply(fct)
 
     group = df.groupby("timeBin").sum()
-    group["metric"] = group["deviation"]
-    events = group[group["metric"]> group["metric"].median()+2*group["metric"].mad()]
+    group["metric"] = group[metric]
+    events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
 
     fig = plt.figure()
     plt.plot(group.index, group["metric"])
@@ -705,22 +711,22 @@ def rttEventCharacterization(df=None, plotAsnData=False):
     print "Found %s events" % len(events)
     print events
 
-    nbDoc = df["deviation"].sum()
+    nbDoc = df[metric].sum()
 
     for bin in events.index:
         maxVal = 0
         maxLabel = ""
         print "Event: %s " % bin
         # docLen = len(df[df["timeBin"] == bin])
-        docLen = np.sum(df[df["timeBin"] == bin]["deviation"])
+        docLen = np.sum(df[df["timeBin"] == bin][metric])
         plt.figure()
         x = []
 
         for asn in df["asn"].unique():
 
             tmp = df[df["asn"] == asn]
-            nbDocAsn = float(tmp["deviation"].sum())
-            asnFreq = float(tmp[tmp["timeBin"] == bin]["deviation"].sum())
+            nbDocAsn = float(tmp[metric].sum())
+            asnFreq = float(tmp[tmp["timeBin"] == bin][metric].sum())
 
             if nbDocAsn > maxVal:
                 maxVal = nbDocAsn
@@ -744,7 +750,7 @@ def rttEventCharacterization(df=None, plotAsnData=False):
             fig = plt.figure()
             dfasn = df[df["asn"] == asn]
             grp = dfasn.groupby("timeBin").sum()
-            grp["metric"] = grp["deviation"]
+            grp["metric"] = grp[metric]
 
             plt.plot(grp.index, grp["metric"])
             plt.grid(True)

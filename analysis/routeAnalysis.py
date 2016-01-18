@@ -122,14 +122,14 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
 def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file implementation
 
-    nbProcesses = 6
+    nbProcesses = 4
     binMult = 5 
     pool = Pool(nbProcesses,initializer=processInit) 
 
     expParam = {
             "timeWindow": 60*60, # in seconds
             "start": datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
+            "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, # parameter for exponential smoothing 
             "minCorr": 0.25, # correlation scores lower than this value will be reported
             "minSeen": 3,
