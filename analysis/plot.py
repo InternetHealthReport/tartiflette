@@ -27,6 +27,7 @@ from multiprocessing import Process, JoinableQueue, Manager, Pool
 import pygeoip
 import functools
 import socket
+import cPickle as pickle
 
 
 ######## tool functions for plotting #########
@@ -522,7 +523,7 @@ def asn_by_addr(ip, db=None):
         return "Unk"
 
 
-def routeEventCharacterization(df=None):
+def routeEventCharacterization(df=None, plotAsnData=False):
 # TODO do same for route changes
     if df is None:
         print "Retrieving Alarms"
@@ -534,7 +535,8 @@ def routeEventCharacterization(df=None):
         cursor = collection.find( {
                 # "expId": exp["_id"], 
                 "expId": objectid.ObjectId("5680df61f789371d76d2f0d6"), 
-                "corr": {"$lt": 0.0},
+                "corr": {"$lt": -0.0},
+                "timeBin": {"$lt": datetime(2015,6,20, 0, 0, tzinfo=timezone("UTC"))},
                 # "nbProbes": {"$gt": 4},
             }, 
             [ 
@@ -547,10 +549,13 @@ def routeEventCharacterization(df=None):
                 # "diff":1,
                 "corr",
             # ], limit=300000)
-            ], limit=300000)
+            ],
+            # limit=200000
+            )
 
         data = {"timeBin":[], "corr": [], "router":[], "label": [], "ip": [], "pktDiff": []} 
-        
+
+        print "Compute stuff" 
         for row in cursor:
             obsDict = eval("{"+row["obsNextHops"].partition("{")[2][:-1])
             refDict = eval("{"+row["refNextHops"].partition("{")[2][:-1])
@@ -577,78 +582,95 @@ def routeEventCharacterization(df=None):
         # find ASN for each ip
         df["routerAsn"] = df["router"].apply(fct)
         df["peerAsn"] = df["ip"].apply(fct)
-        df["asn"] = df["peerAsn"] #TODO add router ASN as well?
+        # df["asn"] = df["peerAsn"] #TODO add router ASN as well?
         df["position"] = None
         df.ix[df["routerAsn"]==df["peerAsn"], ["position"]] = "IN"
         df.ix[df["routerAsn"]!=df["peerAsn"], ["position"]] = "OUT"
-        df["asn"] += df["peerAsn"] + df["label"] 
+        df["asn"] = df["peerAsn"] + df["label"] + df["position"] 
 
-    dftmp = df[df["position"] == "_OUT"]
+    dftmp = df #df[df["position"] == "OUT"]
     group = dftmp.groupby("timeBin").sum()
-    group["metric"] = group["pktDiff"]
+    metric = "corr"
+    group["metric"] = group[metric].abs()
     events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
-
-    fig = plt.figure()
-    plt.plot(group.index, group["metric"])
-    plt.grid(True)
-    plt.yscale("log")
-    plt.ylabel("Accumulated packet diff.")
-    fig.autofmt_xdate()
-    plt.savefig("fig/tfidf_route.eps")
-    
     print "Found %s events" % len(events)
     print events
 
-    nbDoc = dftmp["pktDiff"].sum()
+    fig = plt.figure(figsize=(10,4))
+    ax = fig.add_subplot(111)
+    ax.plot(group.index, group["metric"])
+    ax.grid(True)
+    # plt.yscale("log")
+
+    plt.ylabel("Accumulated "+metric)
+
+    nbDoc = np.abs(dftmp[metric].sum())
 
     for bin in events.index:
-        maxVal = 0
-        maxLabel = ""
         print "Event: %s " % bin
         # docLen = len(df[df["timeBin"] == bin])
-        docLen = np.sum(dftmp[dftmp["timeBin"] == bin]["pktDiff"])
-        plt.figure()
+        docLen = np.abs(np.sum(dftmp[dftmp["timeBin"] == bin][metric]))
+        # plt.figure()
         x = []
+        maxVal = 0
+        maxLabel = ""
+        label = ""
 
         for asn in dftmp["asn"].unique():
 
             tmp = dftmp[dftmp["asn"] == asn]
-            nbDocAsn = float(tmp["pktDiff"].sum())
-            asnFreq = float(tmp[tmp["timeBin"] == bin]["pktDiff"].sum())
+            nbDocAsn = np.abs(float(tmp[metric].sum()))
+            asnFreq = np.abs(float(tmp[tmp["timeBin"] == bin][metric].sum()))
 
-            if nbDocAsn > maxVal:
-                maxVal = nbDocAsn
-                maxLabel = asn
 
             tfidf = asnFreq/docLen * np.log((nbDoc/nbDocAsn))
             # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
             # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
             if tfidf > 0.5:
                 print "\t%s, tfidf=%s" % (asn, tfidf)
-                maxVal = tfidf
-                maxLabel = asn
+                label += asn.partition(" ")[0]+"_"+asn.partition("_")[2]+"\n"
             x.append(tfidf)
+
+            if tfidf > maxVal:
+                maxVal = tfidf
+                maxLabel = asn.partition(" ")[0]+"_"+asn.partition("_")[2]+"\n"
 
         # print "max asn: %s, %s occurences" % (maxLabel, maxVal)
         # plt.hist(x)
         # plt.savefig("tfidf_hist_%s.eps" % bin)
+        if label != "":
+            ax.annotate(label, xy=(bin, group.ix[group.index==bin,"metric"]), xycoords='data',
+                            xytext=(0, 0), textcoords='offset points',
+                            horizontalalignment='left',
+                            arrowprops=dict(arrowstyle="->"), size=10)
+        else:
+            print "\t%s, tfidf=%s" % (maxLabel, maxVal)
+            # ax.annotate(maxLabel, xy=(bin, group.ix[group.index==bin,"metric"]), xycoords='data',
+                            # xytext=(0, 0), textcoords='offset points',
+                            # horizontalalignment='left',
+                            # arrowprops=dict(arrowstyle="->"), size=10)
+
+
+
+    fig.autofmt_xdate()
+    plt.savefig("fig/tfidf_route.eps")
+
+    if plotAsnData:
+        for asn in df["asn"].unique():
+            fig = plt.figure()
+            dfasn = df[df["asn"] == asn]
+            grp = dfasn.groupby("timeBin").sum()
+            grp["metric"] = grp["deviation"]
+
+            plt.plot(grp.index, grp["metric"])
+            plt.grid(True)
+            plt.yscale("log")
+            plt.title(asn)
+            plt.ylabel("Accumulated deviation")
+            fig.autofmt_xdate()
+            plt.savefig("fig/routeChange_asn/%s.eps" % asn)
 
     return df
-
-    for asn in df["asn"].unique():
-        fig = plt.figure()
-        dfasn = df[df["asn"] == asn]
-        grp = dfasn.groupby("timeBin").sum()
-        grp["metric"] = grp["deviation"]
-
-        plt.plot(grp.index, grp["metric"])
-        plt.grid(True)
-        plt.yscale("log")
-        plt.title(asn)
-        plt.ylabel("Accumulated deviation")
-        fig.autofmt_xdate()
-        plt.savefig("fig/routeChange_asn/%s.eps" % asn)
-
 
 
 def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
@@ -663,7 +685,8 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
         cursor = collection.aggregate([
             {"$match": {
                 # "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
-                "expId": exp["_id"], 
+                "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
+                # "expId": exp["_id"], 
                 # "nbProbeASN": {"$gt": 2},
                 # "asnEntropy": {"$gt": 0.5},
                 # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
@@ -698,15 +721,14 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
 
     group = df.groupby("timeBin").sum()
     group["metric"] = group[metric]
-    events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
+    events = group[group["metric"]> group["metric"].mean()+3*group["metric"].std()]
 
-    fig = plt.figure()
-    plt.plot(group.index, group["metric"])
-    plt.grid(True)
+    fig = plt.figure(figsize=(10,4))
+    ax = fig.add_subplot(111)
+    ax.plot(group.index, group["metric"])
+    ax.grid(True)
     plt.yscale("log")
     plt.ylabel("Accumulated deviation")
-    fig.autofmt_xdate()
-    plt.savefig("tfidf_metric.eps")
     
     print "Found %s events" % len(events)
     print events
@@ -714,36 +736,46 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
     nbDoc = df[metric].sum()
 
     for bin in events.index:
-        maxVal = 0
-        maxLabel = ""
         print "Event: %s " % bin
         # docLen = len(df[df["timeBin"] == bin])
         docLen = np.sum(df[df["timeBin"] == bin][metric])
-        plt.figure()
+        # plt.figure()
         x = []
 
+        maxVal = 0
+        label = ""
         for asn in df["asn"].unique():
 
             tmp = df[df["asn"] == asn]
             nbDocAsn = float(tmp[metric].sum())
             asnFreq = float(tmp[tmp["timeBin"] == bin][metric].sum())
 
-            if nbDocAsn > maxVal:
-                maxVal = nbDocAsn
-                maxLabel = asn
-
             tfidf = asnFreq/docLen * np.log(1 + (nbDoc/nbDocAsn))
             # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
             # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
-            if tfidf > 0.4:
+            if tfidf > 0.5:
                 print "\t%s, tfidf=%s" % (asn, tfidf)
+                label += asn.partition(" ")[0]+"\n"
+                # if len(asn)>16:
+                    # label += asn[:16]+". \n"
+                # else:
+                    # label += asn+"\n"
+
+            if tfidf > maxVal:
                 maxVal = tfidf
-                maxLabel = asn
+
             x.append(tfidf)
 
         # print "max asn: %s, %s occurences" % (maxLabel, maxVal)
         # plt.hist(x)
         # plt.savefig("tfidf_hist_%s.eps" % bin)
+        ax.annotate(label, xy=(bin, group.ix[group.index==bin,"metric"]), xycoords='data',
+                            xytext=(0, 0), textcoords='offset points',
+                            horizontalalignment='left',
+                            arrowprops=dict(arrowstyle="->"), size=10)
+
+    fig.autofmt_xdate()
+    plt.savefig("fig/tfidf_metric.eps")
 
     if plotAsnData:
         for asn in df["asn"].unique():
@@ -770,7 +802,8 @@ def rttRefStats(ref=None):
     if ref is None:
         # ref = pickle.load(open("./saved_references/567f808ff7893768932b8334_inferred.pickle"))
         # ref = pickle.load(open("./saved_references/5680de2af789371baee2d573_inferred.pickle"))
-        ref = pickle.load(open("./saved_references/5690b974f789370712b97cb4_inferred.pickle"))
+        # ref = pickle.load(open("./saved_references/5690b974f789370712b97cb4_inferred.pickle"))
+        ref = pickle.load(open("./saved_references/5693c2e0f789373763a0bdf7_inferred.pickle"))
 
     print "%s ip pairs" % len(ref)
  
@@ -793,6 +826,7 @@ def rttRefStats(ref=None):
     ecdf(confSize, label="interval size")
     ecdf(confDown, label="lower bound")
     ecdf(confUp, label="upper bound")
+    plt.ylabel("CDF")
     plt.xscale("log")
     # plt.yscale("log")
     plt.grid(True)
@@ -811,6 +845,7 @@ def rttRefStats(ref=None):
     plt.figure(figsize=(4,3))
     # plt.hist(nbProbes,bins=50, log=True)
     ecdf(nbProbes)
+    plt.ylabel("CDF")
     plt.xscale("log")
     # plt.yscale("log")
     plt.grid(True)
@@ -835,6 +870,7 @@ def rttRefStats(ref=None):
     
     plt.figure(figsize=(4,3))
     ecdf(nbSeen)
+    plt.ylabel("CDF")
     plt.grid(True)
     plt.xlabel("# observations per link")
     plt.xscale("log")
@@ -844,6 +880,7 @@ def rttRefStats(ref=None):
 
     plt.figure(figsize=(4,3))
     ecdf(nbReported)
+    plt.ylabel("CDF")
     plt.grid(True)
     plt.xscale("log")
     plt.xlabel("# reports per link")
@@ -853,21 +890,24 @@ def rttRefStats(ref=None):
 
     plt.figure(figsize=(4,3))
     ecdf(obsPeriod)
+    plt.ylabel("CDF")
     plt.grid(True)
     plt.xscale("log")
-    plt.xlabel("Observation period per link")
+    plt.xlabel("Observation period per link (in hours)")
+    plt.ylabel("CDF")
     plt.tight_layout()
     plt.savefig("fig/rttChange_ref_obsPeriod.eps")
     plt.close()
 
     plt.figure(figsize=(4,3))
-    for bound in [(0, 3*24, "< 3days"), (3*24, 7*24, "< 1week"), (7*24, 30*24, "< 1month")]:
+    for bound in [(0, 1*24, "< 1day"), (1*24, 7*24, "< 1week"), (7*24, 30*24, "< 1month")]:
         n = nbSeen[(obsPeriod>=bound[0]) & (obsPeriod<bound[1])]
         o = obsPeriod[(obsPeriod>=bound[0]) & (obsPeriod<bound[1])]
-        print "%s : %s pairs, mean=%s, median=%s" %(bound, len(n), np.mean(n/o), np.median(n/o))
+        print "%s : %s pairs, observation ratio per link: mean=%s, median=%s" %(bound, len(n), np.mean(n/o), np.median(n/o))
         ecdf(n/o, label=bound[2])
     plt.grid(True)
     plt.xlabel("Observation ratio per link")
+    plt.ylabel("CDF")
     plt.xlim([-0.1, 1.1])
     # plt.legend()
     plt.tight_layout()
@@ -881,6 +921,7 @@ def rttRefStats(ref=None):
     plt.plot([4/16., 4/16.], [0, 1])
     plt.plot([8/16., 8/16.], [0, 1])
     plt.grid(True)
+    plt.ylabel("CDF")
     plt.xlabel("Observation ratio per link")
     plt.xlim([-0.1, 1.1])
     # plt.legend()

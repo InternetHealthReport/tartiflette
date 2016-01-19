@@ -282,7 +282,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "start": datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
             "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
             # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
-            "alpha": 0.5, 
+            "alpha": 0.01, 
             "confInterval": 0.05,
             "minASN": 3,
             "minASNEntropy": 0.5,
