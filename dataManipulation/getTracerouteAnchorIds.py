@@ -57,7 +57,7 @@ def storeTracerouteIds():
             continue
 
         count += 1
-        sys.stdout.write("\r%s anchoring measurments found" % count)
+        sys.stdout.write("\r%s anchoring measurements found" % count)
         sys.stdout.flush()
         if response["af"] == 4:
             v4file.write('"msm_id":%s\n' % response["id"])
