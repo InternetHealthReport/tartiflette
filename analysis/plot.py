@@ -523,7 +523,7 @@ def asn_by_addr(ip, db=None):
         return "Unk"
 
 
-def routeEventCharacterization(df=None, plotAsnData=False):
+def routeEventCharacterization(df=None, plotAsnData=False, metric="pktDiff"):
 # TODO do same for route changes
     if df is None:
         print "Retrieving Alarms"
@@ -590,7 +590,7 @@ def routeEventCharacterization(df=None, plotAsnData=False):
 
     dftmp = df #df[df["position"] == "OUT"]
     group = dftmp.groupby("timeBin").sum()
-    metric = "corr"
+    
     group["metric"] = group[metric].abs()
     events = group[group["metric"]> group["metric"].median()+3*group["metric"].mad()]
     print "Found %s events" % len(events)
@@ -660,15 +660,16 @@ def routeEventCharacterization(df=None, plotAsnData=False):
             fig = plt.figure()
             dfasn = df[df["asn"] == asn]
             grp = dfasn.groupby("timeBin").sum()
-            grp["metric"] = grp["deviation"]
+            grp["metric"] = grp[metric].abs()
 
             plt.plot(grp.index, grp["metric"])
             plt.grid(True)
             plt.yscale("log")
             plt.title(asn)
-            plt.ylabel("Accumulated deviation")
+            plt.ylabel("Accumulated "+metric)
             fig.autofmt_xdate()
-            plt.savefig("fig/routeChange_asn/%s.eps" % asn)
+            plt.savefig("fig/routeChange_asn/"+tools.str2filename("%s.eps" % asn))
+            plt.close()
 
     return df
 
@@ -788,7 +789,7 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
             plt.grid(True)
             plt.yscale("log")
             plt.title(asn)
-            plt.ylabel("Accumulated deviation")
+            plt.ylabel("Accumulated "+metric)
             fig.autofmt_xdate()
             plt.savefig("fig/rttChange_asn/"+tools.str2filename("%s.eps" % asn))
             plt.close()

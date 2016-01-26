@@ -26,13 +26,13 @@ import plot
 
 from bson import objectid
 
-def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
+def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
-    measured and inferred RTTs.
+    differential RTTs.
     """
 
     if trace is None or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
-        return measuredRtt, inferredRtt
+        return diffRtt
 
     # probeId = "probe_%s"  % trace["prb_id"]
     probeIp = trace["from"]
@@ -62,16 +62,6 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
                     rttAgg = np.median(rtts)
                     rttMed[ip2] = rttAgg
 
-                    # measured path
-                    # if not measuredRtt is None:
-                        # if (probeId, ip2) in measuredRtt:
-                            # m = measuredRtt[(probeId, ip2)]
-                            # m["rtt"].append(rttAgg)
-                            # m["probe"].add(probeIp)
-                        # else:
-                            # measuredRtt[(probeId, ip2)] = {"rtt": [rttAgg], 
-                                                        # "probe": set([probeIp])}
-
                     # Differential rtt
                     if len(prevRttMed):
                         for ip1, pRttAgg in prevRttMed.iteritems():
@@ -80,19 +70,19 @@ def readOneTraceroute(trace, measuredRtt, inferredRtt, metric=np.nanmedian):
 
                             # data for (ip1, ip2) and (ip2, ip1) are put
                             # together in mergeRttResults
-                            if (ip1, ip2) in inferredRtt:
-                                i = inferredRtt[(ip1,ip2)]
+                            if (ip1, ip2) in diffRtt:
+                                i = diffRtt[(ip1,ip2)]
                                 i["rtt"].append(rttAgg-pRttAgg)
                                 i["probe"].add(probeIp)
                             else:
-                                inferredRtt[(ip1,ip2)] = {"rtt": [rttAgg-pRttAgg],
+                                diffRtt[(ip1,ip2)] = {"rtt": [rttAgg-pRttAgg],
                                                         "probe": set([probeIp])}
 
         finally:
             prevRttMed = rttMed
             # TODO we miss 2 inferred links if a router never replies
 
-    return measuredRtt, inferredRtt
+    return diffRtt
 
 
 
@@ -120,8 +110,7 @@ def computeRtt( (af, start, end, skip, limit) ):
     collectionNames = set(["traceroute%s_%s_%02d_%02d" % (af, d.year, d.month, d.day) for d in [s,e]])
 
     nbRow = 0
-    measuredRtt = None
-    inferredRtt = defaultdict(dict)
+    diffRtt = defaultdict(dict)
     for col in collectionNames:
         collection = db[col]
         cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
@@ -131,18 +120,18 @@ def computeRtt( (af, start, end, skip, limit) ):
                 # cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 batch_size=int(10e6))
         for trace in cursor: 
-            readOneTraceroute(trace, measuredRtt, inferredRtt)
+            readOneTraceroute(trace, diffRtt)
             nbRow += 1
 
-    return measuredRtt, inferredRtt, nbRow
+    return diffRtt, nbRow
 
 ######## used by child processes
 
 def mergeRttResults(rttResults, currDate, tsS, nbBins):
 
-        inferredRtt = defaultdict(dict)
+        diffRtt = defaultdict(dict)
         nbRow = 0 
-        for i, (mRtt, iRtt, compRows) in enumerate(rttResults):
+        for i, (iRtt, compRows) in enumerate(rttResults):
             if compRows==0:
                 continue
 
@@ -150,20 +139,20 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
                 for k, v in iRtt.iteritems():
 
                     # put together data for (ip1, ip2) and (ip2, ip1)
-                    ipPair = sorted(k)
-                    if ipPair in inferredRtt:
-                        inf = inferredRtt[ipPair]
+                    ipPair = tuple(sorted(k))
+                    if ipPair in diffRtt:
+                        inf = diffRtt[ipPair]
                         inf["rtt"].extend(v["rtt"])
                         inf["probe"].update(v["probe"])
                     else:
-                        inferredRtt[ipPair] = v
+                        diffRtt[ipPair] = v
 
             nbRow += compRows
             timeSpent = (time.time()-tsS)
             sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
                 "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
 
-        return measuredRtt, inferredRtt, nbRow
+        return diffRtt, nbRow
 
 
 def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, gi,
@@ -298,8 +287,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     alarmsCollection = db.rttChanges
     expId = detectionExperiments.insert_one(expParam).inserted_id 
 
-    sampleMedianMeasured = None 
-    sampleMedianInferred = {}
+    sampleMediandiff = {}
     ip2asn = {}
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
@@ -323,15 +311,13 @@ def detectRttChangesMongo(configFile="detection.cfg"):
         for i, val in enumerate(skip):
             params.append( (expParam["af"], currDate, currDate+expParam["timeWindow"], val, limit) )
 
-        measuredRtt = None
-        inferredRtt = defaultdict(dict)
+        diffRtt = defaultdict(dict)
         nbRow = 0 
         rttResults =  pool.imap_unordered(computeRtt, params)
-        measuredRtt, inferredRtt, nbRow = mergeRttResults(rttResults, currDate, tsS, nbProcesses*binMult)
+        diffRtt, nbRow = mergeRttResults(rttResults, currDate, tsS, nbProcesses*binMult)
 
         # Detect oulier values
-        for dist, smoothMean in [(measuredRtt, sampleMedianMeasured),
-                (inferredRtt, sampleMedianInferred)]:
+        for dist, smoothMean in [ (diffRtt, sampleMediandiff)]:
             outlierDetection(dist, smoothMean, expParam, expId, 
                     datetime.utcfromtimestamp(currDate), ip2asn, gi, alarmsCollection)
 
@@ -342,7 +328,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     pool.close()
     pool.join()
 
-    for ref, label in [(sampleMedianMeasured, "measured"), (sampleMedianInferred, "inferred")]:
+    for ref, label in [(sampleMediandiff, "diffRTT")]:
         if not ref is None:
             print "Writing %s reference to file system." % (label)
             fi = open("saved_references/%s_%s.pickle" % (expId, label), "w")
