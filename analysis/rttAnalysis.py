@@ -198,7 +198,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
             #remove one sample from the most prominent AS
             maxAsn = max(asn, key=asn.get)
             remove = random.randrange(0,len(asnProbeIdx[maxAsn]))
-            rmIdx = asnProbeIdx.pop(remove)
+            rmIdx = asnProbeIdx[maxAsn].pop(remove)
             mask[rmIdx] = False
             asn[maxAsn] -= 1
             #remove the AS if we removed all its probes
