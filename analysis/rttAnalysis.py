@@ -73,10 +73,10 @@ def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
                             if (ip1, ip2) in diffRtt:
                                 i = diffRtt[(ip1,ip2)]
                                 i["rtt"].append(rttAgg-pRttAgg)
-                                i["probe"].add(probeIp)
+                                i["probe"].append(probeIp)
                             else:
                                 diffRtt[(ip1,ip2)] = {"rtt": [rttAgg-pRttAgg],
-                                                        "probe": set([probeIp])}
+                                                        "probe": [probeIp]}
 
         finally:
             prevRttMed = rttMed
@@ -143,7 +143,7 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
                     if ipPair in diffRtt:
                         inf = diffRtt[ipPair]
                         inf["rtt"].extend(v["rtt"])
-                        inf["probe"].update(v["probe"])
+                        inf["probe"].extend(v["probe"])
                     else:
                         diffRtt[ipPair] = v
 
@@ -171,23 +171,54 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
 
     for ipPair, data in sampleDistributions.iteritems():
 
-        dist = data["rtt"]
-        nbProbes = len(data["probe"])
+        dist = np.array(data["rtt"])
+        probes = np.array(data["probes"])
+        mask = np.array([True]*len(dist))
         asn = defaultdict(int)
-        for ip in data["probe"]:
+        asnProbeIdx = defaultdict(list)
+
+        for idx, ip in enumerate(data["probe"]):
             try:
                 if not ip in ip2asn:
                     ip2asn[ip] = str(unicode(gi.asn_by_addr(ip)).partition(" ")[0])
             except socket.error:
                 print "Unable to find the ASN for this address: "+ip
                 ip2asn[ip] = "Unk"
-            asn[ip2asn[ip]] += 1
+            a = ip2asn[ip]
+            asn[a] += 1
+            asnProbeIdx[a].append(idx)
                 
         asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
-        n = len(dist) 
+        trimDist = False
+       
+        # trim the distribution if needed
+        while asnEntropy < minASNEntropy and len(asn) > minAsn:
+
+            #remove one sample from the most prominent AS
+            maxAsn = max(asn, key=asn.get)
+            remove = random.randrange(0,len(asnProbeIdx[maxAsn]))
+            rmIdx = asnProbeIdx.pop(remove)
+            mask[rmIdx] = False
+            asn[maxAsn] -= 1
+            #remove the AS if we removed all its probes
+            if asn[maxAsn] <= 0:
+                asn.pop(maxAsn, None)
+        
+            # recompute the entropy
+            asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
+            trimDist = True 
+
         # Compute the distribution median
         if len(asn) < minAsn or asnEntropy < minASNEntropy:
             continue
+
+        # if trimmed then update the sample dist and probes
+        if trimDist:
+            dist = dist[mask]
+            probes = probes[mask]
+
+        nbProbes = len(probes)
+        n = len(dist) 
         med = np.median(dist)
         wilsonCi = sm.stats.proportion_confint(len(dist)/2, len(dist), confInterval, "wilson")
         wilsonCi = np.array(wilsonCi)*len(dist)
@@ -215,9 +246,9 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
                 alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
                         "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
                         "median": med, "nbSamples": n, "nbProbes": nbProbes, "deviation": deviation,
-                        "diff": diff, "expId": expId, "diffMed": diffMed, "probeASN": list(asn),
-                        "nbProbeASN": len(asn), "asnEntropy": asnEntropy, "nbSeen": ref["nbSeen"],
-                        "devBound": devBound}
+                        "diff": diff, "expId": expId, "diffMed": diffMed, "samplePerASN": list(asn),
+                        "nbASN": len(asn), "asnEntropy": asnEntropy, "nbSeen": ref["nbSeen"],
+                        "devBound": devBound, "trimDist": trimDist}
 
                 reported = True
 
@@ -238,20 +269,22 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
                 ref["mean"] = (1-alpha)*ref["mean"]+alpha*med
                 ref["high"] = (1-alpha)*ref["high"]+alpha*currHi
                 ref["low"] = (1-alpha)*ref["low"]+alpha*currLow
-            ref["probe"].update(data["probe"]) 
+            ref["probe"].update(set(data["probe"])) 
             ref["lastSeen"] = ts
             if reported:
                 ref["nbReported"] += 1
+            if trimDist:
+                ref["nbTrimmed"] += 1
         else:
             # add new ref
             if minSeen > 1:
                 smoothMean[ipPair] = {"mean": [med], "high": [currHi], 
                     "low": [currLow], "probe": set(data["probe"]), "firstSeen":ts,
-                    "lastSeen":ts, "nbSeen":1, "nbReported": 0 }  
+                    "lastSeen":ts, "nbSeen":1, "nbReported": 0, "nbTrimmed": int(trimDist) }  
             else:
                 smoothMean[ipPair] = {"mean": float(med), "high": float(currHi), 
                     "low": float(currLow), "probe": set(data["probe"]), "firstSeen":ts,
-                    "lastSeen":ts, "nbSeen":1, "nbReported": 0 }  
+                    "lastSeen":ts, "nbSeen":1, "nbReported": 0 , "nbTrimmed": int(trimDist)}  
 
 
     # Insert all alarms to the database
@@ -269,7 +302,8 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "timeWindow": 60*60, # in seconds 
             # "historySize": 24*7,  # 7 days
             "start": datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
-            "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
+            # "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
+            "end":   datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
             # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, 
             "confInterval": 0.05,
