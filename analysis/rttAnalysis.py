@@ -21,6 +21,7 @@ import socket
 import functools
 import pandas as pd
 import plot
+import random
 
 # import cProfile
 
@@ -172,7 +173,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
     for ipPair, data in sampleDistributions.iteritems():
 
         dist = np.array(data["rtt"])
-        probes = np.array(data["probes"])
+        probes = np.array(data["probe"])
         mask = np.array([True]*len(dist))
         asn = defaultdict(int)
         asnProbeIdx = defaultdict(list)
