@@ -27,6 +27,7 @@ import random
 
 from bson import objectid
 
+#TODO try to speed up this function with numba?
 def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
     differential RTTs.
@@ -302,7 +303,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
     expParam = {
             "timeWindow": 60*60, # in seconds 
             # "historySize": 24*7,  # 7 days
-            "start": datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
+            "start": datetime(2015, 5, 1, 0, 0, tzinfo=timezone("UTC")), 
             # "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
             "end":   datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
             # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
@@ -313,7 +314,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "minSeen": 3,
             "experimentDate": datetime.now(),
             "af": "",
-            "comment": "60 min all data",
+            "comment": "60 min May and June 2015",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")

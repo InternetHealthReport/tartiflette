@@ -122,20 +122,20 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
 def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file implementation
 
-    nbProcesses = 4
-    binMult = 5 
+    nbProcesses = 6
+    binMult = 4 
     pool = Pool(nbProcesses,initializer=processInit) 
 
     expParam = {
             "timeWindow": 60*60, # in seconds
-            "start": datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
-            "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
+            "start": datetime(2015, 5, 1, 0, 0, tzinfo=timezone("UTC")), 
+            "end":   datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, # parameter for exponential smoothing 
-            "minCorr": 0.25, # correlation scores lower than this value will be reported
+            "minCorr": 0.2, # correlation scores lower than this value will be reported
             "minSeen": 3,
             "af": "",
             "experimentDate": datetime.now(),
-            "comment": "set ref history, and removed min samples",
+            "comment": "60 min May and June 2015",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
@@ -215,7 +215,7 @@ def routeChangeDetection(newRoutes, refRoutes, param, expId, ts, collection=None
 
                         reported = True
                         alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target,
-                                "refNextHops": str(nextHopsRef), "obsNextHops": str(nextHops),
+                                "refNextHops": dict(nextHopsRef), "obsNextHops": dict(nextHops),
                                 "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count),
                                 "nbSeen": nextHopsRef["stats"]["nbSeen"]}
 

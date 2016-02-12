@@ -10,7 +10,7 @@ import re
 from pytz import timezone
 import sys
 import itertools
-from datetime import datetime
+import datetime
 from datetime import timedelta
 from pytz import timezone
 import calendar
@@ -167,9 +167,9 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
     expParam = {
             "timeWindow": 60*60, # in seconds 
-            "start": datetime(2015, 11, 24, 23, 45, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 12, 3, 0, 0, tzinfo=timezone("UTC")),
-            "experimentDate": datetime.now(),
+            "start": datetime.datetime(2015, 11, 24, 23, 45, tzinfo=timezone("UTC")), 
+            "end":   datetime.datetime(2015, 12, 3, 0, 0, tzinfo=timezone("UTC")),
+            "experimentDate": datetime.datetime.now(),
             }
 
     start = int(calendar.timegm(expParam["start"].timetuple()))
@@ -181,9 +181,9 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     rawRttInferredDate = defaultdict(list) 
 
     for currDate in range(start,end,expParam["timeWindow"]):
-        sys.stderr.write("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
+        sys.stderr.write("Rtt analysis %s" % datetime.datetime.utcfromtimestamp(currDate))
         tsS = time.time()
-        currDatetime = datetime.utcfromtimestamp(currDate)
+        currDatetime = datetime.datetime.utcfromtimestamp(currDate)
 
         # Get distributions for the current time bin
         params = []
@@ -523,8 +523,15 @@ def asn_by_addr(ip, db=None):
         return "Unk"
 
 
+def country_by_addr(ip, db=None):
+    try:
+        return unicode(db.country_code_by_addr(ip)).encode("ascii", "ignore") #.partition(" ")[0]
+    except socket.error:
+        return "Unk"
+
+
 def routeEventCharacterization(df=None, plotAsnData=False, metric="pktDiff"):
-# TODO do same for route changes
+
     if df is None:
         print "Retrieving Alarms"
         db = tools.connect_mongo()
@@ -533,10 +540,10 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="pktDiff"):
         exp = db.routeExperiments.find_one({}, sort=[("$natural", -1)] )
 
         cursor = collection.find( {
-                # "expId": exp["_id"], 
-                "expId": objectid.ObjectId("5680df61f789371d76d2f0d6"), 
-                "corr": {"$lt": -0.0},
-                "timeBin": {"$lt": datetime(2015,6,20, 0, 0, tzinfo=timezone("UTC"))},
+                "expId": exp["_id"], 
+                # "expId": objectid.ObjectId("5680df61f789371d76d2f0d6"), 
+                "corr": {"$lt": -0.2},
+                # "timeBin": {"$lt": datetime.datetime(2015,6,20, 0, 0, tzinfo=timezone("UTC"))},
                 # "nbProbes": {"$gt": 4},
             }, 
             [ 
@@ -600,7 +607,7 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="pktDiff"):
     ax = fig.add_subplot(111)
     ax.plot(group.index, group["metric"])
     ax.grid(True)
-    # plt.yscale("log")
+    plt.yscale("log")
 
     plt.ylabel("Accumulated "+metric)
 
@@ -674,7 +681,7 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="pktDiff"):
     return df
 
 
-def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
+def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound", historySize=7*24):
     if df is None:
         print "Retrieving Alarms"
         db = tools.connect_mongo()
@@ -686,8 +693,8 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
         cursor = collection.aggregate([
             {"$match": {
                 # "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
-                "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
-                # "expId": exp["_id"], 
+                #"expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
+                "expId": exp["_id"], 
                 # "nbProbeASN": {"$gt": 2},
                 # "asnEntropy": {"$gt": 0.5},
                 # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
@@ -701,7 +708,7 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
                 "nbSeen":1,
                 "nbProbes":1,
                 "entropy":1,
-                # "nbSamples":1,
+                "nbSamples":1,
                 # "nbProbes":1,
                 # "diff":1,
                 "deviation": 1,
@@ -714,22 +721,37 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound"):
         df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
         df.set_index("timeBin")
 
-        gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
-        fct = functools.partial(asn_by_addr, db=gi)
+        ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+        fct = functools.partial(asn_by_addr, db=ga)
 
         # find ASN for each ip
         df["asn"] = df["ipPair"].apply(fct)
+        df["devPkt"] = df["devBound"]*df["nbSamples"]
+
+        # AS unit: normalize by AS nb of links
+        g = df.groupby(["timeBin","asn"]).count()
+        df["devAsn"] = df["devBound"]/df.join(g, on=["timeBin","asn"], rsuffix="_asn")["ipPair_asn"]
+
+        # find country for each ip
+        ga = pygeoip.GeoIP("../lib/GeoIP.dat")
+        fct = functools.partial(asn_by_addr, db=ga)
 
     group = df.groupby("timeBin").sum()
-    group["metric"] = group[metric]
-    events = group[group["metric"]> group["metric"].mean()+3*group["metric"].std()]
+    ## Normalization 
+    # count = df.groupby("timeBin").count()
+    # group["metric"] = group[metric]/count["ipPair"]
+    mad= lambda x: np.median(np.fabs(x -np.median(x)))
+    group["metric"] = (group[metric]-pd.rolling_median(group[metric],historySize))/(1.4826*pd.rolling_apply(group[metric],historySize,mad))
+    # group["metric"] = (group[metric]-pd.rolling_mean(group[metric],historySize))/(pd.rolling_std(group[metric],historySize))
+    events = group[group["metric"]> 10]
 
     fig = plt.figure(figsize=(10,4))
     ax = fig.add_subplot(111)
     ax.plot(group.index, group["metric"])
     ax.grid(True)
-    plt.yscale("log")
-    plt.ylabel("Accumulated deviation")
+    # plt.yscale("log")
+    # plt.ylabel("Accumulated deviation")
+    plt.ylabel("magnitude")
     
     print "Found %s events" % len(events)
     print events
