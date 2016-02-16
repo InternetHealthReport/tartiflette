@@ -681,7 +681,31 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="pktDiff"):
     return df
 
 
-def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound", historySize=7*24):
+def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, metric="devBound", unit = "diffMed", historySize=7*24):
+    
+    if ref is None:
+        db = tools.connect_mongo()
+        exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        print "Looking at experiment: %s" % exp["_id"]
+
+        savedRef = pickle.load(open("saved_references/%s_diffRTT.pickle" % exp["_id"]))
+
+        ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+        gc = pygeoip.GeoIP("../lib/GeoIP.dat")
+
+        countAsn = defaultdict(int)
+        countCountry = defaultdict(int)
+        for k in savedRef.iterkeys():
+            countAsn[asn_by_addr(k[0],db=ga)]+=1
+            countAsn[asn_by_addr(k[1],db=ga)]+=1
+
+            countCountry[country_by_addr(k[0],db=gc)]+=1
+            countCountry[country_by_addr(k[1],db=gc)]+=1
+
+        ref = {}
+        ref["asn"] = pd.DataFrame(data={"asn": countAsn.keys(), "count": countAsn.values()})
+        ref["country"] = pd.DataFrame(data={"country": countCountry.keys(), "count": countCountry.values()})
+
     if df is None:
         print "Retrieving Alarms"
         db = tools.connect_mongo()
@@ -704,13 +728,11 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound", hist
             {"$project": {
                 "ipPair":1,
                 "timeBin":1,
-                "refMean":1,
-                "nbSeen":1,
                 "nbProbes":1,
                 "entropy":1,
                 "nbSamples":1,
-                # "nbProbes":1,
-                # "diff":1,
+                "diffMed":1,
+                "diff":1,
                 "deviation": 1,
                 "devBound": 1,
                 }},
@@ -721,29 +743,52 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound", hist
         df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
         df.set_index("timeBin")
 
+
+    if unit+"_Pkt" not in df.columns:
+            # pkt/link unit
+            df[unit+"_Pkt"] = df[unit]*df["nbSamples"]
+
+    if "asn" not in df.columns:
+        # find ASN for each ip
         ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
         fct = functools.partial(asn_by_addr, db=ga)
-
-        # find ASN for each ip
         df["asn"] = df["ipPair"].apply(fct)
-        df["devPkt"] = df["devBound"]*df["nbSamples"]
 
+    if unit+"_Asn" not in df.columns:
         # AS unit: normalize by AS nb of links
         g = df.groupby(["timeBin","asn"]).count()
-        df["devAsn"] = df["devBound"]/df.join(g, on=["timeBin","asn"], rsuffix="_asn")["ipPair_asn"]
+        df[unit+"_Asn"] = df[unit]/pd.merge(df, ref["asn"], on=["asn"])["count"]
 
+    if "country" not in df.columns:
         # find country for each ip
-        ga = pygeoip.GeoIP("../lib/GeoIP.dat")
-        fct = functools.partial(asn_by_addr, db=ga)
+        gc = pygeoip.GeoIP("../lib/GeoIP.dat")
+        fct = functools.partial(country_by_addr, db=gc)
+        df["country"] = df["ipPair"].apply(fct)
+
+    if unit+"_Country" not in df.columns:
+        # Country unit: normalize by country
+        g = df.groupby(["timeBin","country"]).count()
+        df[unit+"_Country"] = df[unit]/pd.merge(df, ref["country"], on=["country"])["count"]
+
+    if unit+"_Earth" not in df.columns:
+        # Country unit: normalize by country
+        g = df.groupby(["timeBin","country"]).count()
+        df[unit+"_Earth"] = df[unit]/ref["country"]["count"].sum()
+
+    if "prefix/24" not in df.columns:
+        df["prefix/24"] = df["ipPair"].str.extract("([0-9]*\.[0-9]*\.[0-9]*)\.[0-9]*")+".0/24"
+
+    if "prefix/16" not in df.columns:
+        df["prefix/16"] = df["ipPair"].str.extract("([0-9]*\.[0-9]*)\.[0-9]*\.[0-9]*")+".0.0/16"
 
     group = df.groupby("timeBin").sum()
     ## Normalization 
     # count = df.groupby("timeBin").count()
     # group["metric"] = group[metric]/count["ipPair"]
-    mad= lambda x: np.median(np.fabs(x -np.median(x)))
-    group["metric"] = (group[metric]-pd.rolling_median(group[metric],historySize))/(1.4826*pd.rolling_apply(group[metric],historySize,mad))
-    # group["metric"] = (group[metric]-pd.rolling_mean(group[metric],historySize))/(pd.rolling_std(group[metric],historySize))
-    events = group[group["metric"]> 10]
+    # mad= lambda x: np.median(np.fabs(x -np.median(x)))
+    # group["metric"] = (group[metric]-pd.rolling_median(group[metric],historySize))/(1.4826*pd.rolling_apply(group[metric],historySize,mad))
+    group["metric"] = (group[metric]-pd.rolling_mean(group[metric],historySize))/(pd.rolling_std(group[metric],historySize))
+    events = group[group["metric"]> tau]
 
     fig = plt.figure(figsize=(10,4))
     ax = fig.add_subplot(111)
@@ -752,6 +797,7 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound", hist
     # plt.yscale("log")
     # plt.ylabel("Accumulated deviation")
     plt.ylabel("magnitude")
+    # plt.title(metric)
     
     print "Found %s events" % len(events)
     print events
@@ -759,64 +805,145 @@ def rttEventCharacterization(df=None, plotAsnData=False, metric="devBound", hist
     nbDoc = df[metric].sum()
 
     for bin in events.index:
+        dfwin = df[(df["timeBin"] <= bin) & (df["timeBin"] >= bin-timedelta(hours=historySize))]
         print "Event: %s " % bin
-        # docLen = len(df[df["timeBin"] == bin])
-        docLen = np.sum(df[df["timeBin"] == bin][metric])
+        docLen = np.sum(dfwin[dfwin["timeBin"] == bin][metric])
         # plt.figure()
         x = []
 
         maxVal = 0
         label = ""
-        for asn in df["asn"].unique():
 
-            tmp = df[df["asn"] == asn]
-            nbDocAsn = float(tmp[metric].sum())
-            asnFreq = float(tmp[tmp["timeBin"] == bin][metric].sum())
+        voca = {}
+        # voca["country"] = dfwin["country"].unique()
+        voca["asn"] = dfwin["asn"].unique()
+        voca["prefix/24"] = dfwin["prefix/24"].unique()
+        for col, words in voca.iteritems():
+            for word in words:
+                nbDocWord = float(dfwin[dfwin[col] == word][metric].sum())
+                wordFreq = float(dfwin[(dfwin["timeBin"] == bin) & (dfwin[col] == word)][metric].sum())
 
-            tfidf = asnFreq/docLen * np.log(1 + (nbDoc/nbDocAsn))
-            # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
-            # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
-            if tfidf > 0.5:
-                print "\t%s, tfidf=%s" % (asn, tfidf)
-                label += asn.partition(" ")[0]+"\n"
-                # if len(asn)>16:
-                    # label += asn[:16]+". \n"
-                # else:
-                    # label += asn+"\n"
+                tf = wordFreq/docLen
+                tfidf = tf * np.log(1 + (nbDoc/nbDocWord))
+                # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
+                # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
+                if tfidf > 0.7:
+                    print "\t%s, tfidf=%.2f, tf=%.2f" % (word, tfidf, tf)
+                    label += word.partition(" ")[0]+" (%d%%)\n" % (tf*100)
+                    # if len(asn)>16:
+                        # label += asn[:16]+". \n"
+                    # else:
+                        # label += asn+"\n"
 
-            if tfidf > maxVal:
-                maxVal = tfidf
+                if tfidf > maxVal:
+                    maxVal = tfidf
 
-            x.append(tfidf)
+                x.append(tfidf)
 
         # print "max asn: %s, %s occurences" % (maxLabel, maxVal)
         # plt.hist(x)
         # plt.savefig("tfidf_hist_%s.eps" % bin)
         ax.annotate(label, xy=(bin, group.ix[group.index==bin,"metric"]), xycoords='data',
-                            xytext=(0, 0), textcoords='offset points',
+                            xytext=(5, 0), textcoords='offset points',
                             horizontalalignment='left',
-                            arrowprops=dict(arrowstyle="->"), size=10)
+                            arrowprops=dict(arrowstyle="->"), size=8)
 
     fig.autofmt_xdate()
-    plt.savefig("fig/tfidf_metric.eps")
+    plt.savefig("fig/tfidf_%s.eps" % metric)
 
     if plotAsnData:
         for asn in df["asn"].unique():
-            fig = plt.figure()
+            fig = plt.figure(figsize=(10,4))
             dfasn = df[df["asn"] == asn]
-            grp = dfasn.groupby("timeBin").sum()
-            grp["metric"] = grp[metric]
+            grp = dfasn.groupby("timeBin")
+            grpSum = grp.sum()
+            grpCount = grp.count()
+            if len(grp) < 500:
+                continue
+            # grp["metric"] = grp[metric]
+            grpSum["metric"] = (grpSum[metric]-pd.rolling_mean(grpSum[metric],historySize))/(pd.rolling_std(grpSum[metric],historySize))
 
-            plt.plot(grp.index, grp["metric"])
+            plt.plot(grpSum.index, grpSum["metric"])
             plt.grid(True)
-            plt.yscale("log")
             plt.title(asn)
-            plt.ylabel("Accumulated "+metric)
+            plt.ylabel("Magnitude "+metric)
             fig.autofmt_xdate()
-            plt.savefig("fig/rttChange_asn/"+tools.str2filename("%s.eps" % asn))
+            plt.savefig("fig/rttChange_asn/"+unit+"/"+tools.str2filename("%s.eps" % asn))
             plt.close()
 
-    return df
+            # Scatter plot magnitude vs. nb. links
+            fig = plt.figure()
+            plt.plot(grpSum["metric"], grpCount["ipPair"], "*")
+            plt.ylabel("# IPs")
+            plt.xlabel("Magnitude")
+            plt.grid(True)
+            plt.savefig("fig/rttChange_asn/"+unit+"/"+tools.str2filename("%s_magnVSlink.eps" % asn))
+            plt.close()
+
+            # Mean and Median
+            for u in ["devBound", "diffMed"]:
+                # Scatter plot magnitude vs. nb. links
+                grpMean = grp.mean()
+                grpMedian = grp.median()
+                fig = plt.figure(figsize=(10,4))
+                plt.plot(grpMean.index, grpMean[u], label="mean")
+                plt.plot(grpMedian.index, grpMedian[u], label="median")
+                plt.ylabel(u)
+                if u == "devBound":
+                    plt.yscale("log")
+                plt.grid(True)
+                plt.title(asn)
+                fig.autofmt_xdate()
+                plt.savefig("fig/rttChange_asn/"+unit+"/"+tools.str2filename("%s_%s.eps" % (asn, u)))
+                plt.close()
+
+            # Sum
+            for u in ["devBound", "diffMed"]:
+                # Scatter plot magnitude vs. nb. links
+                grpSum = grp.sum()
+                fig = plt.figure(figsize=(10,4))
+                plt.plot(grpSum.index, grpSum[u], label="sum")
+                plt.ylabel(u)
+                plt.yscale("log")
+                plt.grid(True)
+                plt.title(asn)
+                fig.autofmt_xdate()
+                plt.savefig("fig/rttChange_asn/"+unit+"/"+tools.str2filename("%s_%s_sum.eps" % (asn, u)))
+                plt.close()
+            # std. dev.
+            for u in ["devBound", "diffMed"]:
+                grpStd = grp.std()
+                fig = plt.figure(figsize=(10,4))
+                plt.plot(grpStd.index, grpStd[u])
+                plt.ylabel(u)
+                # plt.yscale("log")
+                plt.grid(True)
+                plt.title(asn)
+                fig.autofmt_xdate()
+                plt.savefig("fig/rttChange_asn/"+unit+"/"+tools.str2filename("%s_%s_std.eps" % (asn, u)))
+                plt.close()
+
+            # Number ips
+            for u in ["devBound", "diffMed"]:
+                dfip = dfasn[dfasn[u]>10]
+                grpCrazyIP = dfip.groupby(["timeBin"])
+                if len(grpCrazyIP) < 100:
+                    continue
+                grpCrazy = grpCrazyIP.count()
+                grpCount = grp.count()
+                fig = plt.figure(figsize=(10,4))
+                plt.plot(grpCount.index, grpCount["ipPair"], label="total")
+                plt.plot(grpCrazy.index, grpCrazy["ipPair"], label="crazy")
+                plt.ylabel("# reported IPs")
+                # plt.yscale("log")
+                plt.grid(True)
+                plt.title(asn)
+                fig.autofmt_xdate()
+                plt.savefig("fig/rttChange_asn/"+unit+"/"+tools.str2filename("%s_%s_crazyIP.eps" % (asn, u)))
+                plt.close()
+                
+
+    return df, ref
 
 def rttRefStats(ref=None):
     """ Print RTT change reference properties 
