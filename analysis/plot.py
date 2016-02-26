@@ -43,41 +43,6 @@ def ecdf(a, **kwargs):
 
 
 
-
-######## used by child processes
-collection = None
-
-def processInit():
-    global collection
-    client = pymongo.MongoClient("mongodb-iijlab",connect=True)
-    db = client.atlas
-    collection = db.traceroute_2015_12
-
-def computeRtt( (start, end) ):
-    """Read traceroutes from a cursor. Used for multi-processing.
-    """
-
-    tsS = time.time()
-    nbRow = 0
-    measuredRtt = defaultdict(list)
-    inferredRtt = defaultdict(list)
-    tsM = time.time()
-    cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end},
-            # "result": { "$elemMatch": { "result": {"$elemMatch": {"from": ip2}} } }
-            } , 
-            projection={"timestamp": 1, "result":1, "prb_id":1} , 
-            cursor_type=pymongo.cursor.CursorType.EXHAUST,
-            batch_size=int(10e6))
-    tsM = time.time() - tsM
-    for trace in cursor: 
-        rttAnalysis.readOneTraceroute(trace, measuredRtt, inferredRtt)
-        nbRow += 1
-    timeSpent = time.time()-tsS
-    # print("Worker %0.1f /sec., dict size: (%s, %s), mongo time: %s, total time: %s"
-            # % (float(nbRow)/(timeSpent), len(measuredRtt),len(inferredRtt), tsM, timeSpent))
-
-    return measuredRtt, inferredRtt, nbRow
-
 ######## used by child processes
 def manyRttEvolution(res, minPts=2000):
     
@@ -167,46 +132,65 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
     nbProcesses = 6
     binMult = 5 
-    pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
+    pool = Pool(nbProcesses,initializer=rttAnalysis.processInit) #, maxtasksperchild=binMult)
 
     expParam = {
             "timeWindow": 60*60, # in seconds 
-            "start": datetime.datetime(2015, 11, 24, 23, 45, tzinfo=timezone("UTC")), 
-            "end":   datetime.datetime(2015, 12, 3, 0, 0, tzinfo=timezone("UTC")),
+            "start": datetime.datetime(2015, 6, 12, 0, 0, tzinfo=timezone("UTC")), 
+            "end":   datetime.datetime(2015, 6, 12, 20, 0, tzinfo=timezone("UTC")),
+            "alpha": 0.01, 
+            "confInterval": 0.05,
+            "minASN": 3,
+            "minASNEntropy": 0.5,
+            "minSeen": 3,
             "experimentDate": datetime.datetime.now(),
+            "af": "",
+            "comment": "60 min May and June 2015",
             }
+
+    client = pymongo.MongoClient("mongodb-iijlab")
+    db = client.atlas
+    detectionExperiments = db.rttExperiments
+    alarmsCollection = db.rttChanges
+    expId = detectionExperiments.insert_one(expParam).inserted_id 
+
+    sampleMediandiff = {}
+    ip2asn = {}
+    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
 
-    rawRttMeasured = defaultdict(list)
-    rawRttMeasuredDate = defaultdict(list) 
-    rawRttInferred = defaultdict(list)
-    rawRttInferredDate = defaultdict(list) 
+    rawDiffRtt = defaultdict(list)
+    rawNbProbes = defaultdict(list)
+    rawDates = defaultdict(list) 
 
     for currDate in range(start,end,expParam["timeWindow"]):
         sys.stderr.write("Rtt analysis %s" % datetime.datetime.utcfromtimestamp(currDate))
         tsS = time.time()
-        currDatetime = datetime.datetime.utcfromtimestamp(currDate)
 
         # Get distributions for the current time bin
+        c = datetime.datetime.utcfromtimestamp(currDate)
+        col = "traceroute%s_%s_%02d_%02d" % (expParam["af"], c.year, c.month, c.day) 
+        totalRows = db[col].count({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}})
+        if not totalRows:
+            print "No data for that time bin!"
+            continue
         params = []
-        binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], nbProcesses*binMult+1)
-        for i in range(nbProcesses*binMult):
-            params.append( (binEdges[i], binEdges[i+1]) )
+        limit = int(totalRows/(nbProcesses*binMult-1))
+        skip = range(0, totalRows, limit)
+        for i, val in enumerate(skip):
+            params.append( (expParam["af"], currDate, currDate+expParam["timeWindow"], val, limit) )
 
-        measuredRtt = defaultdict(list)
-        inferredRtt = defaultdict(list)
+        diffRtt = defaultdict(dict)
         nbRow = 0 
-        rttResults =  pool.imap_unordered(computeRtt, params)
-        measuredRtt, inferredRtt, nbRow = rttAnalysis.mergeRttResults(rttResults)
+        rttResults =  pool.imap_unordered(rttAnalysis.computeRtt, params)
+        diffRtt, nbRow = rttAnalysis.mergeRttResults(rttResults, currDate, tsS, nbProcesses*binMult)
 
-        for k,v in measuredRtt.iteritems():
-            rawRttMeasured[k].extend(v)
-            rawRttMeasuredDate[k].extend([currDatetime]*len(v))
-        for k,v in inferredRtt.iteritems():
-            rawRttInferred[k].extend(v)
-            rawRttInferredDate[k].extend([currDatetime]*len(v))
+        for k,v in diffRtt.iteritems():
+            rawDiffRtt[k].extend(v["rtt"])
+            rawNbProbes[k].extend(v["probe"])
+            rawDates[k].extend([c]*len(v))
 
         timeSpent = (time.time()-tsS)
         sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
@@ -214,8 +198,8 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     sys.stderr.write("\n")
     pool.close()
     pool.join()
-    
-    return (rawRttMeasured, rawRttMeasuredDate, rawRttInferred, rawRttInferredDate  )
+
+    return (rawDiffRtt, rawNbProbes, rawDates)
 
 
 def nbRttChanges(df=None, suffix="" ):
