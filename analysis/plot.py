@@ -50,7 +50,7 @@ def prefixDiffRtt(res, prefix, minPts=20):
         if not k[0].startswith(prefix) and not k[1].startswith(prefix):
             continue
         if len(v)>minPts:
-            nbAlarms += rttEvolution( (v, res[2][k]), k, prefix)
+            nbAlarms += rttEvolution( (v, np.array(res[2][k])), k, prefix)
 
     print " %s alarms in total" % nbAlarms
 
@@ -59,25 +59,26 @@ def rttEvolution(res, ips, suffix):
     smoothAvg = []
     smoothHi = []
     smoothLow = []
-    alarms = []
+    alarmsDates = []
+    alarmsValues = []
     median = []
     ciLow = []
     ciHigh = []
     dates = []
-    start = np.min(res[1])
-    end = np.max(res[1])
+    start = np.min(rttDiff[1])
+    end = np.max(rttDiff[1])
     diff = end-start
     # dateRange = pd.date_range(start, end, freq="1H").tolist()
-    dateRange = range(start, end, 60*60).tolist()
+    # dateRange = range(start, end, 60*60)
+    dateRange = [start+timedelta(hours=x) for x in range((diff.days+1)*24)] 
 
     for d in dateRange:
-        print d.to_datetime()
-        print res[1]
-        indices = res[1]==d.to_datetime()
-        dist = res[0][indices]
+        # print d
+        # print rttDiff[1]
+        indices = rttDiff[1]==d
+        dist = rttDiff[0][indices]
         if np.sum(indices) == 0: # or np.sum(dist) < 9:
             continue
-        print "after the if"
         dates.append(d)
         median.append(np.median(dist))
         dist.sort()
@@ -96,21 +97,27 @@ def rttEvolution(res, ips, suffix):
             smoothLow.append(0.99*smoothLow[-1]+0.01*dist[int(wilsonCi[0])])
 
             if median[-1]-ciLow[-1] > smoothHi[-1] or median[-1]+ciHigh[-1] < smoothLow[-1]: 
-                alarms.append(d)
+                alarmsDates.append(d)
+                alarmsValues.append(median[-1])
 
     fig = plt.figure(figsize=(10,4))
-    plt.errorbar(dates, median, [ciLow, ciHigh], ecolor='g')
-    plt.plot(dates, smoothAvg, 'r-')
-    plt.plot(dates, smoothHi, 'k--')
-    # plt.plot(alarms, [10]*len(alarms), "r*")
-    plt.grid(True)
+    boundref = plt.fill_between(dates, smoothLow, smoothHi, color="0.5", facecolor="#DDDDFF", label="Normal Reference")
+    # Workarround to have the fill_between in the legend
+    boundref = plt.Rectangle((0, 0), 1, 1, fc="#DDDDFF", color="0.5")
+    medianref, = plt.plot(dates, smoothAvg, '-', color="#AAAAFF")
+    # plt.plot(dates, smoothHi, 'k--')
+    # plt.plot(dates, smoothLow, 'k--')
+    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=10, color="black", ecolor='0.25', label="Diff. RTT")
+    ano, = plt.plot(alarmsDates, alarmsValues, "r*", ms=10, label="Anomaly")
+    plt.grid(True, color="0.75")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
-    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarms)))
+    plt.legend([data, (boundref, medianref), ano],["Measured Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarmsDates)))
     plt.close()
 
     fig = plt.figure()
-    plt.plot(res[1], res[0],"x")
+    plt.plot(rttDiff[1], rttDiff[0],"x")
     plt.grid(True)
     # plt.yscale("log")
     plt.title("%s - %s" % ips)
@@ -118,7 +125,7 @@ def rttEvolution(res, ips, suffix):
     plt.savefig("fig/diffRtt/%s_%s_%s.eps" % (suffix, ips[0], ips[1]))
     plt.close()
 
-    return len(alarms)
+    return len(alarmsDates)
 
 def getRttData():
     """
@@ -132,8 +139,8 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
     expParam = {
             "timeWindow": 60*60, # in seconds 
-            "start": datetime.datetime(2015, 6, 12, 0, 0, tzinfo=timezone("UTC")), 
-            "end":   datetime.datetime(2015, 6, 12, 20, 0, tzinfo=timezone("UTC")),
+            "start": datetime.datetime(2015, 6, 8, 0, 0, tzinfo=timezone("UTC")), 
+            "end":   datetime.datetime(2015, 6, 22, 20, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, 
             "confInterval": 0.05,
             "minASN": 3,
@@ -185,8 +192,8 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
         for k,v in diffRtt.iteritems():
             rawDiffRtt[k].extend(v["rtt"])
-            rawNbProbes[k].extend(v["probe"])
-            rawDates[k].extend([currDate]*len(v["rtt"]))
+            # rawNbProbes[k].extend(v["probe"])
+            rawDates[k].extend([c]*len(v["rtt"]))
 
         timeSpent = (time.time()-tsS)
         sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
