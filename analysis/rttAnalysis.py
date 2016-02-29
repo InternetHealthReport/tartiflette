@@ -297,16 +297,16 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
 
 def detectRttChangesMongo(configFile="detection.cfg"):
 
-    nbProcesses = 6 
-    binMult = 4 # number of bins = binMult*nbProcesses 
+    nbProcesses = 24 
+    binMult = 2 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     expParam = {
             "timeWindow": 60*60, # in seconds 
             # "historySize": 24*7,  # 7 days
-            "start": datetime(2015, 5, 1, 0, 0, tzinfo=timezone("UTC")), 
+            "start": datetime(2015, 10, 1, 0, 0, tzinfo=timezone("UTC")), 
             # "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
-            "end":   datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
+            "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
             # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, 
             "confInterval": 0.05,
@@ -315,7 +315,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "minSeen": 3,
             "experimentDate": datetime.now(),
             "af": "",
-            "comment": "60 min May and June 2015",
+            "comment": "60 min Oct to Dec. 2015",
             }
 
     client = pymongo.MongoClient("mongodb-iijlab")
