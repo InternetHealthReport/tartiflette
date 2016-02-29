@@ -93,8 +93,8 @@ db = None
 
 def processInit():
     global db
-    # client = pymongo.MongoClient("mongodb-iijlab",connect=True)
-    client = pymongo.MongoClient("10.206.116.235",connect=True)
+    client = pymongo.MongoClient("mongodb-iijlab",connect=True)
+    # client = pymongo.MongoClient("10.206.116.235",connect=True)
     db = client.atlas
 
 # def computeRtt( (start, end) ):

@@ -43,40 +43,43 @@ def ecdf(a, **kwargs):
 
 
 
-######## used by child processes
-def manyRttEvolution(res, minPts=2000):
+def prefixDiffRtt(res, prefix, minPts=20):
     
     nbAlarms = 0
     for k, v in res[0].iteritems():
+        if not k[0].startswith(prefix) and not k[1].startswith(prefix):
+            continue
         if len(v)>minPts:
-            nbAlarms += rttEvolution( (v, res[1][k]), k)
+            nbAlarms += rttEvolution( (v, res[2][k]), k, prefix)
 
     print " %s alarms in total" % nbAlarms
 
-def rttEvolution(res, ips):
-    res = np.array(res)
+def rttEvolution(res, ips, suffix):
+    rttDiff = np.array(res)
     smoothAvg = []
     smoothHi = []
     smoothLow = []
     alarms = []
     median = []
-    mean = []
     ciLow = []
     ciHigh = []
     dates = []
     start = np.min(res[1])
     end = np.max(res[1])
     diff = end-start
-    dateRange = [start+timedelta(hours=x) for x in range(diff.days*24)]
+    # dateRange = pd.date_range(start, end, freq="1H").tolist()
+    dateRange = range(start, end, 60*60).tolist()
 
     for d in dateRange:
-        indices = res[1]==d
+        print d.to_datetime()
+        print res[1]
+        indices = res[1]==d.to_datetime()
         dist = res[0][indices]
-        if np.sum(indices) == 0 or np.sum(dist) < 18:
+        if np.sum(indices) == 0: # or np.sum(dist) < 9:
             continue
+        print "after the if"
         dates.append(d)
         median.append(np.median(dist))
-        mean.append(np.mean(dist))
         dist.sort()
         wilsonCi = sm.stats.proportion_confint(len(dist)/2, len(dist), 0.05, "wilson")
         wilsonCi = np.array(wilsonCi)*len(dist)
@@ -92,25 +95,18 @@ def rttEvolution(res, ips):
             smoothHi.append(0.99*smoothHi[-1]+0.01*dist[int(wilsonCi[1])])
             smoothLow.append(0.99*smoothLow[-1]+0.01*dist[int(wilsonCi[0])])
 
-
             if median[-1]-ciLow[-1] > smoothHi[-1] or median[-1]+ciHigh[-1] < smoothLow[-1]: 
                 alarms.append(d)
-
-        # if np.min(dist) > 9.0:
-            # print dist
-            # print median[-1]
-            # print  median[-1] - dist[int(wilsonCi[0])] 
-            # print  dist[int(wilsonCi[1])] - median[-1] 
 
     fig = plt.figure(figsize=(10,4))
     plt.errorbar(dates, median, [ciLow, ciHigh], ecolor='g')
     plt.plot(dates, smoothAvg, 'r-')
     plt.plot(dates, smoothHi, 'k--')
-    plt.plot(alarms, [10]*len(alarms), "r*")
+    # plt.plot(alarms, [10]*len(alarms), "r*")
     plt.grid(True)
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
-    plt.savefig("fig/rawData/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarms)))
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarms)))
     plt.close()
 
     fig = plt.figure()
@@ -119,7 +115,7 @@ def rttEvolution(res, ips):
     # plt.yscale("log")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate() 
-    plt.savefig("fig/rawData/%s_%s_rttRawData.eps" % ips)
+    plt.savefig("fig/diffRtt/%s_%s_%s.eps" % (suffix, ips[0], ips[1]))
     plt.close()
 
     return len(alarms)
@@ -190,7 +186,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
         for k,v in diffRtt.iteritems():
             rawDiffRtt[k].extend(v["rtt"])
             rawNbProbes[k].extend(v["probe"])
-            rawDates[k].extend([c]*len(v))
+            rawDates[k].extend([currDate]*len(v["rtt"]))
 
         timeSpent = (time.time()-tsS)
         sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
