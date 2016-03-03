@@ -136,7 +136,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
     configFile = "conf/getRttData.conf"
     if os.path.exists(configFile):
-        expParam = json.loads(open(configFile,"w"), object_hood=json_util.object_hook)
+        expParam = json.load(open(configFile,"r"), object_hook=json_util.object_hook)
     else:
         sys.stderr("No config file found!\nPlease copy conf/%s.default to conf/%s\n" % (configFile, configFile))
 
@@ -192,7 +192,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
             # print "No data for that time bin!"
             # continue
         params = []
-        binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], expParam["nbProcesses"]*nbProcesses["binMult"]+1)
+        binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], expParam["nbProcesses"]*expParam["binMult"]+1)
         for i in range(expParam["nbProcesses"]*expParam["binMult"]):
             params.append( (expParam["af"], binEdges[i], binEdges[i+1], 0, 0, expParam["prefixes"]) )
 
