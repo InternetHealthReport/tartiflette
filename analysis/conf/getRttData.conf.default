@@ -1,0 +1,22 @@
+{
+    "comment": "60 min May and June 2015", 
+    "af": "", 
+    "minASNEntropy": 0.5, 
+    "alpha": 0.01, 
+    "end": {
+        "$date": 1434139200000
+    }, 
+    "binMult": 3, 
+    "timeWindow": 3600, 
+    "minSeen": 3, 
+    "start": {
+        "$date": 1434067200000
+    }, 
+    "minASN": 3, 
+    "nbProcesses": 24, 
+    "experimentDate": {
+        "$date": 1456747743895
+    }, 
+    "confInterval": 0.05,
+    "prefixes": "^154\\.54|^130\\.117\\.14\\.|^130\\.117\\.48|^4\\.69|^67\\.16\\.133|^208\\.178\\.246"
+}
