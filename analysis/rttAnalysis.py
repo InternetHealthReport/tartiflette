@@ -22,6 +22,7 @@ import functools
 import pandas as pd
 import plot
 import random
+import re
 
 # import cProfile
 
@@ -67,7 +68,7 @@ def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
                     # Differential rtt
                     if len(prevRttMed):
                         for ip1, pRttAgg in prevRttMed.iteritems():
-                            if ip1 == ip2:
+                            if ip1 == ip2 :
                                 continue
 
                             # data for (ip1, ip2) and (ip2, ip1) are put
@@ -103,7 +104,7 @@ def processInit():
     # # results = computeRtt2( (start, end) )
     # return results[0]
 
-def computeRtt( (af, start, end, skip, limit) ):
+def computeRtt( (af, start, end, skip, limit, prefixes) ):
     """Read traceroutes from a cursor. Used for multi-processing.
 
     Assume start and end are less than 24h apart
@@ -116,7 +117,15 @@ def computeRtt( (af, start, end, skip, limit) ):
     diffRtt = defaultdict(dict)
     for col in collectionNames:
         collection = db[col]
-        cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
+        if prefixes is None:
+            cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end} } , 
+                projection={"result":1, "from":1} , 
+                skip = skip,
+                limit = limit,
+                # cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                batch_size=int(10e6))
+        else:
+            cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}, "result.result.from": prefixes } , 
                 projection={"result":1, "from":1} , 
                 skip = skip,
                 limit = limit,
@@ -152,8 +161,12 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
 
             nbRow += compRows
             timeSpent = (time.time()-tsS)
-            sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+            if nbBins>1:
+                sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
                 "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
+            else:
+                sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+                "#"*(30*i/(nbBins)), "-"*(30*(nbBins-i)/(nbBins)), timeSpent, float(nbRow)/timeSpent))
 
         return diffRtt, nbRow
 
@@ -316,7 +329,11 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             "experimentDate": datetime.now(),
             "af": "",
             "comment": "60 min Oct to Dec. 2015",
+            "prefixes": None
             }
+
+    if not expParam["prefixes"] is None:
+        expParam["prefixes"] = re.compile(expParam["prefixes"])
 
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
@@ -338,7 +355,10 @@ def detectRttChangesMongo(configFile="detection.cfg"):
         # Get distributions for the current time bin
         c = datetime.utcfromtimestamp(currDate)
         col = "traceroute%s_%s_%02d_%02d" % (expParam["af"], c.year, c.month, c.day) 
-        totalRows = db[col].count({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}})
+        if expParam["prefixes"] is None:
+            totalRows = db[col].count({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}})
+        else:
+            totalRows = db[col].count({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}, "result.result.from": expParam["prefixes"] })
         if not totalRows:
             print "No data for that time bin!"
             continue
@@ -346,7 +366,7 @@ def detectRttChangesMongo(configFile="detection.cfg"):
         limit = int(totalRows/(nbProcesses*binMult-1))
         skip = range(0, totalRows, limit)
         for i, val in enumerate(skip):
-            params.append( (expParam["af"], currDate, currDate+expParam["timeWindow"], val, limit) )
+            params.append( (expParam["af"], currDate, currDate+expParam["timeWindow"], val, limit, expParam["prefixes"]) )
 
         diffRtt = defaultdict(dict)
         nbRow = 0 
@@ -361,7 +381,6 @@ def detectRttChangesMongo(configFile="detection.cfg"):
         timeSpent = (time.time()-tsS)
         sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
     
-    sys.stderr.write("\n")
     pool.close()
     pool.join()
 
