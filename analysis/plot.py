@@ -17,6 +17,7 @@ import calendar
 import time
 import os
 import json
+from bson import json_util
 import glob
 import numpy as np
 from collections import defaultdict
@@ -133,24 +134,32 @@ def getRttData():
 Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     """
 
-    nbProcesses = 6
-    binMult = 3 
-    pool = Pool(nbProcesses,initializer=rttAnalysis.processInit) #, maxtasksperchild=binMult)
+    configFile = "conf/getRttData.conf"
+    if os.path.exists(configFile):
+        expParam = json.load(open(configFile,"r"), object_hook=json_util.object_hook)
+    else:
+        sys.stderr("No config file found!\nPlease copy conf/%s.default to conf/%s\n" % (configFile, configFile))
 
-    expParam = {
-            "timeWindow": 60*60, # in seconds 
-            "start": datetime.datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
-            "end":   datetime.datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
-            "alpha": 0.01, 
-            "confInterval": 0.05,
-            "minASN": 3,
-            "minASNEntropy": 0.5,
-            "minSeen": 3,
-            "experimentDate": datetime.datetime.now(),
-            "af": "",
-            "comment": "Cogent and Level3 anomalies in June 2015",
-            "prefixes": "^154\.54|^130\.117\.14\.|^130\.117\.48|^4\.69|^67\.16\.133|^208\.178\.246"
-            }
+    pool = Pool(expParam["nbProcesses"],initializer=rttAnalysis.processInit) #, maxtasksperchild=binMult)
+
+    # nbProcesses = 6
+    # binMult = 3 
+    # pool = Pool(nbProcesses,initializer=rttAnalysis.processInit) #, maxtasksperchild=binMult)
+
+    # expParam = {
+            # "timeWindow": 60*60, # in seconds 
+            # "start": datetime.datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
+            # "end":   datetime.datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
+            # "alpha": 0.01, 
+            # "confInterval": 0.05,
+            # "minASN": 3,
+            # "minASNEntropy": 0.5,
+            # "minSeen": 3,
+            # "experimentDate": datetime.datetime.now(),
+            # "af": "",
+            # "comment": "Cogent and Level3 anomalies in June 2015",
+            # "prefixes": "^154\.54|^130\.117\.14\.|^130\.117\.48|^4\.69|^67\.16\.133|^208\.178\.246"
+            # }
 
     if not expParam["prefixes"] is None:
         expParam["prefixes"] = re.compile(expParam["prefixes"])
@@ -183,14 +192,14 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
             # print "No data for that time bin!"
             # continue
         params = []
-        binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], nbProcesses*binMult+1)
-        for i in range(nbProcesses*binMult):
+        binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], expParam["nbProcesses"]*expParam["binMult"]+1)
+        for i in range(expParam["nbProcesses"]*expParam["binMult"]):
             params.append( (expParam["af"], binEdges[i], binEdges[i+1], 0, 0, expParam["prefixes"]) )
 
         diffRtt = defaultdict(dict)
         nbRow = 0 
         rttResults =  pool.imap_unordered(rttAnalysis.computeRtt, params)
-        diffRtt, nbRow = rttAnalysis.mergeRttResults(rttResults, currDate, tsS, nbProcesses*binMult)
+        diffRtt, nbRow = rttAnalysis.mergeRttResults(rttResults, currDate, tsS, expParam["nbProcesses"]*expParam["binMult"])
 
         for k,v in diffRtt.iteritems():
             rawDiffRtt[k].extend(v["rtt"])
