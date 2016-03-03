@@ -511,8 +511,11 @@ def distributionShapiro(results):
 asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
 def asn_by_addr(ip, db=None):
     try:
-        asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 
-        return asn_regex.groups() 
+        m = asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 
+        if m is None:
+            return ("0", "Unk")
+        else:
+            return m.groups() 
     except socket.error:
         return ("0", "Unk")
 
@@ -837,11 +840,11 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
 
 
 def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_minScore=0.7,
-        metric="devBound_Earth", unit = "devBound", historySize=7*24):
+        metric="devBound", unit = "devBound", historySize=7*24, exportCsv=False):
     
     if ref is None:
         db = tools.connect_mongo()
-        exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        exp = {"_id": objectid.ObjectId("56ae94f1f789376c5fbd8bd8")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
         savedRef = pickle.load(open("saved_references/%s_diffRTT.pickle" % exp["_id"]))
@@ -867,7 +870,8 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         db = tools.connect_mongo()
         collection = db.rttChanges
 
-        exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        # exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        exp = {"_id": objectid.ObjectId("56ae94f1f789376c5fbd8bd8")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
         cursor = collection.aggregate([
@@ -875,6 +879,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
                 # "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 #"expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 "expId": exp["_id"], 
+                "timeBin": {"$gt": datetime.datetime(2015,6,15)},
                 # "nbProbeASN": {"$gt": 2},
                 # "asnEntropy": {"$gt": 0.5},
                 # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
@@ -898,6 +903,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         df =  pd.DataFrame(list(cursor))
         df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
         df.set_index("timeBin")
+        print "got the data"
 
     if "diffMedAbs" not in df.columns:
         df["diffMedAbs"] = df["diffMed"].abs()
@@ -910,40 +916,42 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
             df[unit+"_Pkt"] = df[unit]*df["nbSamples"]
 
     if "asn" not in df.columns:
+        print "find AS numbers"
         # find ASN for each ip
         ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
         fct = functools.partial(asn_by_addr, db=ga)
         sTmp = df["ipPair"].apply(fct).apply(pd.Series)
-        df["asn_name"] = sTmp
+        df["asn_name"] = sTmp[0]+" "+sTmp[1]
         df["asn"] = sTmp[0]
         df["asname"] = sTmp[1]
 
-    if unit+"_Asn" not in df.columns:
-        # AS unit: normalize by AS nb of links
-        g = df.groupby(["timeBin","asn"]).count()
-        df[unit+"_Asn"] = df[unit]/pd.merge(df, ref["asn"], on=["asn"])["count"]
+    # if unit+"_Asn" not in df.columns:
+        # # AS unit: normalize by AS nb of links
+        # g = df.groupby(["timeBin","asn"]).count()
+        # df[unit+"_Asn"] = df[unit]/pd.merge(df, ref["asn"], on=["asn"])["count"]
 
-    if "country" not in df.columns:
-        # find country for each ip
-        gc = pygeoip.GeoIP("../lib/GeoIP.dat")
-        fct = functools.partial(country_by_addr, db=gc)
-        df["country"] = df["ipPair"].apply(fct)
+    # if "country" not in df.columns:
+        # # find country for each ip
+        # gc = pygeoip.GeoIP("../lib/GeoIP.dat")
+        # fct = functools.partial(country_by_addr, db=gc)
+        # df["country"] = df["ipPair"].apply(fct)
 
-    if unit+"_Country" not in df.columns:
-        # Country unit: normalize by country
-        g = df.groupby(["timeBin","country"]).count()
-        df[unit+"_Country"] = df[unit]/pd.merge(df, ref["country"], on=["country"])["count"]
+    # if unit+"_Country" not in df.columns:
+        # # Country unit: normalize by country
+        # g = df.groupby(["timeBin","country"]).count()
+        # df[unit+"_Country"] = df[unit]/pd.merge(df, ref["country"], on=["country"])["count"]
 
-    if unit+"_Earth" not in df.columns:
-        # Country unit: normalize by country
-        g = df.groupby(["timeBin","country"]).count()
-        df[unit+"_Earth"] = df[unit]/ref["country"]["count"].sum()
+    # if unit+"_Earth" not in df.columns:
+        # # Country unit: normalize by country
+        # g = df.groupby(["timeBin","country"]).count()
+        # df[unit+"_Earth"] = df[unit]/ref["country"]["count"].sum()
 
     if "prefix/24" not in df.columns:
+        print "find prefixes"
         df["prefix/24"] = df["ipPair"].str.extract("([0-9]*\.[0-9]*\.[0-9]*)\.[0-9]*")+".0/24"
 
-    if "prefix/16" not in df.columns:
-        df["prefix/16"] = df["ipPair"].str.extract("([0-9]*\.[0-9]*)\.[0-9]*\.[0-9]*")+".0.0/16"
+    # if "prefix/16" not in df.columns:
+        # df["prefix/16"] = df["ipPair"].str.extract("([0-9]*\.[0-9]*)\.[0-9]*\.[0-9]*")+".0.0/16"
 
     group = df.groupby("timeBin").sum()
     ## Normalization 
@@ -986,6 +994,10 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
             grp = dfasn.groupby("timeBin")
             grpSum = grp.sum()
             grpCount = grp.count()
+
+            if len(grpSum)<240:
+                continue
+
             # grp["metric"] = grp[metric]
             # grpSum["metric"] = (grpSum[metric]-pd.rolling_mean(grpSum[metric],historySize))/(pd.rolling_std(grpSum[metric],historySize))
             mad= lambda x: np.median(np.fabs(x -np.median(x)))
