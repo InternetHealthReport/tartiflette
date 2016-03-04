@@ -310,8 +310,8 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
 
 def detectRttChangesMongo(configFile="detection.cfg"):
 
-    nbProcesses = 24 
-    binMult = 2 # number of bins = binMult*nbProcesses 
+    nbProcesses = 12 
+    binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     expParam = {

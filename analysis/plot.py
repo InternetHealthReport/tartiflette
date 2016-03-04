@@ -77,8 +77,8 @@ def rttEvolution(res, ips, suffix):
         # print d
         # print rttDiff[1]
         indices = rttDiff[1]==d
-        dist = rttDiff[0][indices]
-        if np.sum(indices) == 0: # or np.sum(dist) < 9:
+        dist = rttDiff[0][indices] 
+        if len(dist) < 3:
             continue
         dates.append(d)
         median.append(np.median(dist))
@@ -88,10 +88,18 @@ def rttEvolution(res, ips, suffix):
         ciLow.append( median[-1] - dist[int(wilsonCi[0])] )
         ciHigh.append( dist[int(wilsonCi[1])] - median[-1] )
 
-        if not len(smoothAvg):
+        if len(smoothAvg)<3:
             smoothAvg.append(median[-1])
             smoothHi.append(dist[int(wilsonCi[1])])
             smoothLow.append(dist[int(wilsonCi[0])])
+        elif len(smoothAvg)==3:
+            smoothAvg.append(np.median(smoothAvg))
+            smoothHi.append(np.median(smoothHi))
+            smoothLow.append(np.median(smoothLow))
+            for i in range(3):
+                smoothAvg[i] = smoothAvg[-1]
+                smoothHi[i] = smoothHi[-1]
+                smoothLow[i] = smoothLow[-1]
         else:
             smoothAvg.append(0.99*smoothAvg[-1]+0.01*median[-1])
             smoothHi.append(0.99*smoothHi[-1]+0.01*dist[int(wilsonCi[1])])
@@ -100,6 +108,9 @@ def rttEvolution(res, ips, suffix):
             if median[-1]-ciLow[-1] > smoothHi[-1] or median[-1]+ciHigh[-1] < smoothLow[-1]: 
                 alarmsDates.append(d)
                 alarmsValues.append(median[-1])
+
+    if len(median)<2:
+        return 0
 
     fig = plt.figure(figsize=(10,4))
     boundref = plt.fill_between(dates, smoothLow, smoothHi, color="0.5", facecolor="#DDDDFF", label="Normal Reference")
@@ -113,17 +124,34 @@ def rttEvolution(res, ips, suffix):
     plt.grid(True, color="0.75")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
-    plt.legend([data, (boundref, medianref), ano],["Measured Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    # plt.legend([data, (boundref, medianref), ano],["Measured Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    # plt.yscale("log")
     plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarmsDates)))
     plt.close()
 
-    fig = plt.figure()
+    f, ax = plt.subplots(1,1,figsize=(6,4.5))
+    sm.qqplot(np.array(median), line="45", fit=True, ax=ax)
+    plt.title("%s - %s" % ips)
+    plt.grid(True, color="0.75")
+    plt.title("%s - %s" % ips)
+    plt.ylabel("Median diff. RTT Quantiles")
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot.eps" % (ips[0], ips[1], len(alarmsDates)))
+    plt.close()
+
+    plt.figure()
+    plt.hist(rttDiff[0], bins=150)
+    plt.grid(True, color="0.75")
+    plt.yscale("log")
+    plt.savefig("fig/diffRtt/%s_%s_distributionSamples.eps" % (ips[0], ips[1]))
+    plt.close()
+
+    fig = plt.figure(figsize=(10,4))
     plt.plot(rttDiff[1], rttDiff[0],"x")
     plt.grid(True)
     # plt.yscale("log")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate() 
-    plt.savefig("fig/diffRtt/%s_%s_%s.eps" % (suffix, ips[0], ips[1]))
+    plt.savefig("fig/diffRtt/%s_%s_samples.eps" % (ips[0], ips[1]))
     plt.close()
 
     return len(alarmsDates)
@@ -141,25 +169,6 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
         sys.stderr("No config file found!\nPlease copy conf/%s.default to conf/%s\n" % (configFile, configFile))
 
     pool = Pool(expParam["nbProcesses"],initializer=rttAnalysis.processInit) #, maxtasksperchild=binMult)
-
-    # nbProcesses = 6
-    # binMult = 3 
-    # pool = Pool(nbProcesses,initializer=rttAnalysis.processInit) #, maxtasksperchild=binMult)
-
-    # expParam = {
-            # "timeWindow": 60*60, # in seconds 
-            # "start": datetime.datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
-            # "end":   datetime.datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
-            # "alpha": 0.01, 
-            # "confInterval": 0.05,
-            # "minASN": 3,
-            # "minASNEntropy": 0.5,
-            # "minSeen": 3,
-            # "experimentDate": datetime.datetime.now(),
-            # "af": "",
-            # "comment": "Cogent and Level3 anomalies in June 2015",
-            # "prefixes": "^154\.54|^130\.117\.14\.|^130\.117\.48|^4\.69|^67\.16\.133|^208\.178\.246"
-            # }
 
     if not expParam["prefixes"] is None:
         expParam["prefixes"] = re.compile(expParam["prefixes"])

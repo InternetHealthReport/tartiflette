@@ -131,7 +131,7 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
             "start": datetime(2015, 10, 1, 0, 0, tzinfo=timezone("UTC")), 
             "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
             "alpha": 0.01, # parameter for exponential smoothing 
-            "minCorr": -0.2, # correlation scores lower than this value will be reported
+            "minCorr": -0.25, # correlation scores lower than this value will be reported
             "minSeen": 3,
             "af": "",
             "experimentDate": datetime.now(),
