@@ -122,28 +122,45 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
 def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file implementation
 
-    nbProcesses = 12 
-    binMult = 3 
-    pool = Pool(nbProcesses,initializer=processInit) 
 
-    expParam = {
-            "timeWindow": 60*60, # in seconds
-            "start": datetime(2015, 5, 1, 0, 0, tzinfo=timezone("UTC")), 
-            "end":   datetime(2015, 8, 1, 0, 0, tzinfo=timezone("UTC")),
-            "alpha": 0.01, # parameter for exponential smoothing 
-            "minCorr": -0.25, # correlation scores lower than this value will be reported
-            "minSeen": 3,
-            "af": "",
-            "experimentDate": datetime.now(),
-            "comment": "60 min May and June 2015",
-            }
+    nbProcesses = 12 
+    binMult = 3 # number of bins = binMult*nbProcesses 
+    pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
     detectionExperiments = db.routeExperiments
-    expId = detectionExperiments.insert_one(expParam).inserted_id 
 
-    refRoutes = defaultdict(routeCount)
+    if expId is None:
+        expParam = {
+                "timeWindow": 60*60, # in seconds
+                "start": datetime(2015, 5, 1, 0, 0, tzinfo=timezone("UTC")), 
+                "end":   datetime(2015, 8, 1, 0, 0, tzinfo=timezone("UTC")),
+                "alpha": 0.01, # parameter for exponential smoothing 
+                "minCorr": -0.25, # correlation scores lower than this value will be reported
+                "minSeen": 3,
+                "af": "",
+                "experimentDate": datetime.now(),
+                "comment": "60 min May and June 2015",
+                }
+
+        expId = detectionExperiments.insert_one(expParam).inserted_id 
+        refRoutes = defaultdict(routeCount)
+
+    else:
+        expParam = detectionExperiments.find_one({"_id": expId})
+        expParam["start"] = expParam["end"]
+        expParam["end"] = datetime(2015, 9, 1, 0, 0)
+        resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
+        if resUpdate.modified_count != 1:
+            print "Problem happened when updating the experiment dates!"
+            print resUpdate
+            return
+
+        sys.stderr.write("Loading previous reference...")
+        fi = open("saved_references/%s_%s.pickle" % (expId, "routeChange"), "rb")
+        refRoutes = pickle.load(fi) 
+        sys.stderr.write("done!\n")
 
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
