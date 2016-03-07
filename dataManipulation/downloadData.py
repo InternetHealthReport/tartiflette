@@ -8,11 +8,7 @@ import pymongo
 import gzip
 
 
-
-
-downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], timeWindow = timedelta(minutes=60)):
-
-        
+def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], timeWindow = timedelta(minutes=60) ):
     errors = []
 
     # storage = "mongo"

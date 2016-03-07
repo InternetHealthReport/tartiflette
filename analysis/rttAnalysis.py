@@ -308,40 +308,57 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
         collection.insert_many(alarms)
 
 
-def detectRttChangesMongo(configFile="detection.cfg"):
+def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
 
     nbProcesses = 12 
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
-    expParam = {
-            "timeWindow": 60*60, # in seconds 
-            # "historySize": 24*7,  # 7 days
-            "start": datetime(2015, 10, 1, 0, 0, tzinfo=timezone("UTC")), 
-            # "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
-            "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
-            # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
-            "alpha": 0.01, 
-            "confInterval": 0.05,
-            "minASN": 3,
-            "minASNEntropy": 0.5,
-            "minSeen": 3,
-            "experimentDate": datetime.now(),
-            "af": "",
-            "comment": "60 min Oct to Dec. 2015",
-            "prefixes": None
-            }
-
-    if not expParam["prefixes"] is None:
-        expParam["prefixes"] = re.compile(expParam["prefixes"])
-
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
     detectionExperiments = db.rttExperiments
     alarmsCollection = db.rttChanges
-    expId = detectionExperiments.insert_one(expParam).inserted_id 
 
-    sampleMediandiff = {}
+    if expId is None:
+        expParam = {
+                "timeWindow": 60*60, # in seconds 
+                # "historySize": 24*7,  # 7 days
+                "start": datetime(2015, 5, 1, 0, 0, tzinfo=timezone("UTC")), 
+                # "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
+                "end":   datetime(2015, 8, 1, 0, 0, tzinfo=timezone("UTC")),
+                # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
+                "alpha": 0.01, 
+                "confInterval": 0.05,
+                "minASN": 3,
+                "minASNEntropy": 0.5,
+                "minSeen": 3,
+                "experimentDate": datetime.now(),
+                "af": "",
+                "comment": "60 min Oct to Dec. 2015",
+                "prefixes": None
+                }
+
+        expId = detectionExperiments.insert_one(expParam).inserted_id 
+        sampleMediandiff = {}
+
+    else:
+        expParam = detectionExperiments.find_one({"_id": expId})
+        expParam["start"] = expParam["end"]
+        expParam["end"] = datetime(2015, 9, 1, 0, 0)
+        resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
+        if resUpdate.modified_count != 1:
+            print "Problem happened when updating the experiment dates!"
+            print resUpdate
+            return
+
+        sys.stderr.write("Loading previous reference...")
+        fi = open("saved_references/%s_%s.pickle" % (expId, "diffRTT"), "rb")
+        sampleMediandiff = pickle.load(fi) 
+        sys.stderr.write("done!\n")
+
+    if not expParam["prefixes"] is None:
+        expParam["prefixes"] = re.compile(expParam["prefixes"])
+
     ip2asn = {}
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
@@ -391,11 +408,10 @@ def detectRttChangesMongo(configFile="detection.cfg"):
             pickle.dump(ref, fi, 2) 
 
 
-
-
-
-
 if __name__ == "__main__":
     # testDateRangeMongo(None,save_to_file=True)
-    detectRttChangesMongo()
+    expId = None
+    if len(sys.argv)>1:
+        expId = objectid.ObjectId(sys.argv[1]) 
+    detectRttChangesMongo(expId)
 
