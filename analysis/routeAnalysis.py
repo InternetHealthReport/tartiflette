@@ -13,10 +13,12 @@ from collections import defaultdict
 from collections import deque
 from scipy import stats
 import pymongo
-from multiprocessing import Process, JoinableQueue, Manager, Pool
+from multiprocessing import Process, Pool
 import tools
 # import pykov
 import cPickle as pickle
+
+from bson import objectid
 
 
 # type needed for child processes
@@ -120,7 +122,7 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
 
 
-def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file implementation
+def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO config file implementation
 
 
     nbProcesses = 12 
@@ -183,9 +185,13 @@ def detectRouteChangesMongo(configFile="detection.cfg"): # TODO config file impl
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target)
+            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target) )
 
-        pool.imap_unordered(routeChangeDetection, params)
+        mapResult = pool.map(routeChangeDetection, params)
+
+        # Update the reference
+        for target, newRef in mapResult:
+            refRoutes[target] = newRef
 
             
         if nbRow>0:
@@ -264,7 +270,12 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
     if alarms and not collection is None:
         collection.insert_many(alarms)
 
+    return (target, routesRef)
+
 
 if __name__ == "__main__":
     # testDateRangeMongo(None,save_to_file=True)
-    detectRouteChangesMongo()
+    expId = None
+    if len(sys.argv)>1:
+        expId = objectid.ObjectId(sys.argv[1]) 
+    detectRouteChangesMongo(expId)

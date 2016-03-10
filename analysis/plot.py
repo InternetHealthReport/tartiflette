@@ -113,18 +113,18 @@ def rttEvolution(res, ips, suffix):
         return 0
 
     fig = plt.figure(figsize=(10,4))
-    boundref = plt.fill_between(dates, smoothLow, smoothHi, color="0.5", facecolor="#DDDDFF", label="Normal Reference")
+    boundref = plt.fill_between(dates, smoothLow, smoothHi, color="#3333cc", facecolor="#DDDDFF", label="Normal Reference")
     # Workarround to have the fill_between in the legend
-    boundref = plt.Rectangle((0, 0), 1, 1, fc="#DDDDFF", color="0.5")
+    boundref = plt.Rectangle((0, 0), 1, 1, fc="#DDDDFF", color="#3333cc")
     medianref, = plt.plot(dates, smoothAvg, '-', color="#AAAAFF")
     # plt.plot(dates, smoothHi, 'k--')
     # plt.plot(dates, smoothLow, 'k--')
-    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=10, color="black", ecolor='0.25', label="Diff. RTT")
+    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=5, color="black", ecolor='0.25', label="Diff. RTT")
     ano, = plt.plot(alarmsDates, alarmsValues, "r*", ms=10, label="Anomaly")
     plt.grid(True, color="0.75")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
-    # plt.legend([data, (boundref, medianref), ano],["Measured Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    plt.legend([data, (boundref, medianref), ano],["Measured Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
     # plt.yscale("log")
     plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarmsDates)))
     plt.close()
