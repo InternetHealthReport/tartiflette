@@ -77,8 +77,8 @@ def rttEvolution(res, ips, suffix):
         # print d
         # print rttDiff[1]
         indices = rttDiff[1]==d
-        dist = rttDiff[0][indices]
-        if np.sum(indices) == 0: # or np.sum(dist) < 9:
+        dist = rttDiff[0][indices] 
+        if len(dist) < 3:
             continue
         dates.append(d)
         median.append(np.median(dist))
@@ -88,10 +88,18 @@ def rttEvolution(res, ips, suffix):
         ciLow.append( median[-1] - dist[int(wilsonCi[0])] )
         ciHigh.append( dist[int(wilsonCi[1])] - median[-1] )
 
-        if not len(smoothAvg):
+        if len(smoothAvg)<3:
             smoothAvg.append(median[-1])
             smoothHi.append(dist[int(wilsonCi[1])])
             smoothLow.append(dist[int(wilsonCi[0])])
+        elif len(smoothAvg)==3:
+            smoothAvg.append(np.median(smoothAvg))
+            smoothHi.append(np.median(smoothHi))
+            smoothLow.append(np.median(smoothLow))
+            for i in range(3):
+                smoothAvg[i] = smoothAvg[-1]
+                smoothHi[i] = smoothHi[-1]
+                smoothLow[i] = smoothLow[-1]
         else:
             smoothAvg.append(0.99*smoothAvg[-1]+0.01*median[-1])
             smoothHi.append(0.99*smoothHi[-1]+0.01*dist[int(wilsonCi[1])])
@@ -101,29 +109,52 @@ def rttEvolution(res, ips, suffix):
                 alarmsDates.append(d)
                 alarmsValues.append(median[-1])
 
+    if len(median)<2:
+        return 0
+
     fig = plt.figure(figsize=(10,4))
-    boundref = plt.fill_between(dates, smoothLow, smoothHi, color="0.5", facecolor="#DDDDFF", label="Normal Reference")
+    boundref = plt.fill_between(dates, smoothLow, smoothHi, color="#3333cc", facecolor="#DDDDFF", label="Normal Reference")
     # Workarround to have the fill_between in the legend
-    boundref = plt.Rectangle((0, 0), 1, 1, fc="#DDDDFF", color="0.5")
+    boundref = plt.Rectangle((0, 0), 1, 1, fc="#DDDDFF", color="#3333cc")
     medianref, = plt.plot(dates, smoothAvg, '-', color="#AAAAFF")
     # plt.plot(dates, smoothHi, 'k--')
     # plt.plot(dates, smoothLow, 'k--')
-    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=10, color="black", ecolor='0.25', label="Diff. RTT")
+    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=5, color="black", ecolor='0.25', label="Diff. RTT")
     ano, = plt.plot(alarmsDates, alarmsValues, "r*", ms=10, label="Anomaly")
     plt.grid(True, color="0.75")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
-    plt.legend([data, (boundref, medianref), ano],["Measured Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    plt.legend([data, (boundref, medianref), ano],["Median Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    plt.ylabel("Diff. RTT (ms)")
+    # plt.yscale("log")
     plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarmsDates)))
     plt.close()
 
-    fig = plt.figure()
+    f, ax = plt.subplots(1,1,figsize=(4.8,3.6))
+    sm.qqplot(np.array(median), line="45", fit=True, ax=ax)
+    plt.title("%s - %s" % ips)
+    plt.grid(True, color="0.75")
+    plt.title("%s - %s" % ips)
+    plt.ylabel("Median diff. RTT quantiles")
+    plt.xlabel("Normal theoretical quantiles")
+    plt.tight_layout()
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot.eps" % (ips[0], ips[1], len(alarmsDates)))
+    plt.close()
+
+    plt.figure()
+    plt.hist(rttDiff[0], bins=150)
+    plt.grid(True, color="0.75")
+    plt.yscale("log")
+    plt.savefig("fig/diffRtt/%s_%s_distributionSamples.eps" % (ips[0], ips[1]))
+    plt.close()
+
+    fig = plt.figure(figsize=(10,4))
     plt.plot(rttDiff[1], rttDiff[0],"x")
     plt.grid(True)
     # plt.yscale("log")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate() 
-    plt.savefig("fig/diffRtt/%s_%s_%s.eps" % (suffix, ips[0], ips[1]))
+    plt.savefig("fig/diffRtt/%s_%s_samples.eps" % (ips[0], ips[1]))
     plt.close()
 
     return len(alarmsDates)
@@ -141,25 +172,6 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
         sys.stderr("No config file found!\nPlease copy conf/%s.default to conf/%s\n" % (configFile, configFile))
 
     pool = Pool(expParam["nbProcesses"],initializer=rttAnalysis.processInit) #, maxtasksperchild=binMult)
-
-    # nbProcesses = 6
-    # binMult = 3 
-    # pool = Pool(nbProcesses,initializer=rttAnalysis.processInit) #, maxtasksperchild=binMult)
-
-    # expParam = {
-            # "timeWindow": 60*60, # in seconds 
-            # "start": datetime.datetime(2015, 6, 1, 0, 0, tzinfo=timezone("UTC")), 
-            # "end":   datetime.datetime(2015, 7, 1, 0, 0, tzinfo=timezone("UTC")),
-            # "alpha": 0.01, 
-            # "confInterval": 0.05,
-            # "minASN": 3,
-            # "minASNEntropy": 0.5,
-            # "minSeen": 3,
-            # "experimentDate": datetime.datetime.now(),
-            # "af": "",
-            # "comment": "Cogent and Level3 anomalies in June 2015",
-            # "prefixes": "^154\.54|^130\.117\.14\.|^130\.117\.48|^4\.69|^67\.16\.133|^208\.178\.246"
-            # }
 
     if not expParam["prefixes"] is None:
         expParam["prefixes"] = re.compile(expParam["prefixes"])
@@ -853,7 +865,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
     
     if ref is None:
         db = tools.connect_mongo()
-        exp = {"_id": objectid.ObjectId("56ae94f1f789376c5fbd8bd8")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
         savedRef = pickle.load(open("saved_references/%s_diffRTT.pickle" % exp["_id"]))
@@ -880,7 +892,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         collection = db.rttChanges
 
         # exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
-        exp = {"_id": objectid.ObjectId("56ae94f1f789376c5fbd8bd8")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
         cursor = collection.aggregate([
@@ -997,7 +1009,8 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
     if plotAsnData or exportCsv:
         for asn_name in df["asn_name"].unique():
 
-            asn = asn_name[0]
+            asn = asn_name.partition(" ")[0]
+            asname = asn_name.partition(" ")[2]
             fig = plt.figure(figsize=(10,4))
             dfasn = df[df["asn"] == asn]
             grp = dfasn.groupby("timeBin")
@@ -1013,7 +1026,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
             grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize))/(1.4826*pd.rolling_apply(grpSum[metric],historySize,mad))
 
             if exportCsv:
-                asnFile.write('%s,"%s"\n' % asn_name)
+                asnFile.write("%s,%s\n" % (asn, asname))
                 dftmp = pd.DataFrame(grpSum)
                 dftmp["asn"] = asn
                 dftmp["timeBin"] = dftmp.index
