@@ -1026,7 +1026,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
             grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize))/(1.4826*pd.rolling_apply(grpSum[metric],historySize,mad))
 
             if exportCsv:
-                asnFile.write("%s,%s\n" % (asn, asname))
+                asnFile.write('%s,"%s"\n' % (asn, asname))
                 dftmp = pd.DataFrame(grpSum)
                 dftmp["asn"] = asn
                 dftmp["timeBin"] = dftmp.index
