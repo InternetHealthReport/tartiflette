@@ -124,17 +124,20 @@ def rttEvolution(res, ips, suffix):
     plt.grid(True, color="0.75")
     plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
-    plt.legend([data, (boundref, medianref), ano],["Measured Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    plt.legend([data, (boundref, medianref), ano],["Median Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    plt.ylabel("Diff. RTT (ms)")
     # plt.yscale("log")
     plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarmsDates)))
     plt.close()
 
-    f, ax = plt.subplots(1,1,figsize=(6,4.5))
+    f, ax = plt.subplots(1,1,figsize=(4.8,3.6))
     sm.qqplot(np.array(median), line="45", fit=True, ax=ax)
     plt.title("%s - %s" % ips)
     plt.grid(True, color="0.75")
     plt.title("%s - %s" % ips)
-    plt.ylabel("Median diff. RTT Quantiles")
+    plt.ylabel("Median diff. RTT quantiles")
+    plt.xlabel("Normal theoretical quantiles")
+    plt.tight_layout()
     plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot.eps" % (ips[0], ips[1], len(alarmsDates)))
     plt.close()
 
@@ -862,7 +865,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
     
     if ref is None:
         db = tools.connect_mongo()
-        exp = {"_id": objectid.ObjectId("56ae94f1f789376c5fbd8bd8")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
         savedRef = pickle.load(open("saved_references/%s_diffRTT.pickle" % exp["_id"]))
@@ -889,7 +892,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         collection = db.rttChanges
 
         # exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
-        exp = {"_id": objectid.ObjectId("56ae94f1f789376c5fbd8bd8")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
         cursor = collection.aggregate([
@@ -1003,10 +1006,11 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         asnFile = open("results/csv/congestion_asn.csv","w")
         congestionFile = open("results/csv/congestion.csv","w")
 
-    if plotAsnData:
+    if plotAsnData or exportCsv:
         for asn_name in df["asn_name"].unique():
 
-            asn = asn_name[0]
+            asn = asn_name.partition(" ")[0]
+            asname = asn_name.partition(" ")[2]
             fig = plt.figure(figsize=(10,4))
             dfasn = df[df["asn"] == asn]
             grp = dfasn.groupby("timeBin")
@@ -1022,12 +1026,12 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
             grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize))/(1.4826*pd.rolling_apply(grpSum[metric],historySize,mad))
 
             if exportCsv:
-                asnFile.write("%s,%s\n" % asn_name)
+                asnFile.write("%s,%s\n" % (asn, asname))
                 dftmp = pd.DataFrame(grpSum)
                 dftmp["asn"] = asn
                 dftmp["timeBin"] = dftmp.index
                 dftmp["label"] = "" #TODO add tfidf results
-                dftmp.to_csv(congestionFile, columns=["timeBin","asn","metric", devBound, "label"],
+                dftmp.to_csv(congestionFile, columns=["timeBin","asn","metric", "devBound", "label"],
                         header=["timeBin", "asn", "magnitude", "absoluteDeviation", "label"])
 
             if plotAsnData:

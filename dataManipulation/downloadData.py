@@ -8,7 +8,7 @@ import pymongo
 import gzip
 
 
-def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], timeWindow = timedelta(minutes=60) ):
+def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], reverse=False, split=0, timeWindow = timedelta(minutes=60) ):
     errors = []
 
     # storage = "mongo"
@@ -21,7 +21,14 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], tim
     for af in afs:
         for msmType in msmTypes:
             # Read the corresponding id file
-            for line in  open("./%sMsmIdsv%s.txt" % (msmType, af), "r"):
+            if reverse:
+                msmIds = reversed(open("./%sMsmIdsv%s.txt" % (msmType, af), "r").readlines())
+            else:
+                msmIds = open("./%sMsmIdsv%s.txt" % (msmType, af), "r").readlines()
+
+            msmIds = msmIds[int(len(msmIds)*split):]
+
+            for line in msmIds: 
                 msmId = int(line.partition(":")[2])
 
                 currDate = start
