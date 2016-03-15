@@ -930,7 +930,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
         fct = functools.partial(asn_by_addr, db=ga)
         sTmp = df["ipPair"].apply(fct).apply(pd.Series)
-        df["asn_name"] = sTmp[0]+" "+sTmp[1]
+        df["asn_name"] = zip(sTmp[0], sTmp[1])
         df["asn"] = sTmp[0]
         df["asname"] = sTmp[1]
 
@@ -994,7 +994,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         asnFile = open("results/csv/congestion_asn.csv","w")
         congestionFile = open("results/csv/congestion.csv","w")
 
-    if plotAsnData:
+    if plotAsnData or exportCsv:
         for asn_name in df["asn_name"].unique():
 
             asn = asn_name[0]
@@ -1013,13 +1013,13 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
             grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize))/(1.4826*pd.rolling_apply(grpSum[metric],historySize,mad))
 
             if exportCsv:
-                asnFile.write("%s,%s\n" % asn_name)
+                asnFile.write('%s,"%s"\n' % asn_name)
                 dftmp = pd.DataFrame(grpSum)
                 dftmp["asn"] = asn
                 dftmp["timeBin"] = dftmp.index
-                dftmp["label"] = "" #TODO add tfidf results
-                dftmp.to_csv(congestionFile, columns=["timeBin","asn","metric", devBound, "label"],
-                        header=["timeBin", "asn", "magnitude", "absoluteDeviation", "label"])
+                dftmp["label"] = "none" #TODO add tfidf results
+                dftmp.to_csv(congestionFile, columns=["metric","devBound", "label", "timeBin" ,"asn"],
+                        header=False, index=False, date_format="%Y-%m-%d %H:%M:%S+00", na_rep="0")
 
             if plotAsnData:
                 try:
