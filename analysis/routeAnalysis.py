@@ -152,7 +152,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     else:
         expParam = detectionExperiments.find_one({"_id": expId})
         expParam["start"] = expParam["end"]
-        expParam["end"] = datetime(2015, 9, 1, 0, 0)
+        expParam["end"] = datetime(2016, 1, 1, 0, 0)
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
             print "Problem happened when updating the experiment dates!"

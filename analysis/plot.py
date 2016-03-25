@@ -739,6 +739,7 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
         ax = fig.add_subplot(111)
         ax.plot(group.index.get_level_values("timeBin"), group["metric"])
         ax.grid(True)
+        plt.title("AS1200")
         # plt.ylim([-2, 14])
         # plt.yscale("log")
         # plt.ylabel("Accumulated deviation")
@@ -757,14 +758,14 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
 
     # Plot data per AS
     if plotAsnData:
-        for asn in dfGrpAsn["asn"].unique():
+        for asn in dfGrpAsn["asnL"].unique():
             fig = plt.figure(figsize=(10,4))
-            dfasn = dfGrpAsn[dfGrpAsn["asn"] == asn]
+            dfasn = dfGrpAsn[dfGrpAsn["asnL"] == asn]
             grp = dfasn.groupby("timeBin")
             grpSum = grp.sum()
             grpCount = grp.count()
-            # if grpSum.index.nunique() < 24:
-                # continue
+            if grpSum.index.nunique() < 100: 
+                continue
             # grp["metric"] = grp[metric]
             # grpSum["metric"] = (grpSum[metric]-pd.rolling_mean(grpSum[metric],historySize))/(pd.rolling_std(grpSum[metric],historySize))
             mad= lambda x: np.median(np.fabs(x -np.median(x)))
@@ -820,41 +821,41 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
                 fig.autofmt_xdate()
                 plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_sum.eps" % (asn, u)))
                 plt.close()
-            # std. dev.
-            for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                grpStd = grp.std()
-                fig = plt.figure(figsize=(10,4))
-                plt.plot(grpStd.index, grpStd[u])
-                plt.ylabel(u)
-                # plt.yscale("log")
-                plt.grid(True)
-                plt.title(asn)
-                fig.autofmt_xdate()
-                plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_std.eps" % (asn, u)))
-                plt.close()
+            # # std. dev.
+            # for u in ["corrAbs", "pktDiffAbs", "resp"]:
+                # grpStd = grp.std()
+                # fig = plt.figure(figsize=(10,4))
+                # plt.plot(grpStd.index, grpStd[u])
+                # plt.ylabel(u)
+                # # plt.yscale("log")
+                # plt.grid(True)
+                # plt.title(asn)
+                # # fig.autofmt_xdate()
+                # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_std.eps" % (asn, u)))
+                # plt.close()
 
-            # Number ips
-            for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                if u == "resp":
-                    dfip = dfasn[dfasn[u]>0.9]
-                else:
-                    dfip = dfasn[dfasn[u]>10]
-                grpCrazyIP = dfip.groupby(["timeBin"])
-                try:
-                    grpCrazy = grpCrazyIP.count()
-                    grpCount = grp.count()
-                    fig = plt.figure(figsize=(10,4))
-                    plt.plot(grpCount.index, grpCount["ip"], label="total")
-                    plt.plot(grpCrazy.index, grpCrazy["ip"], label="crazy")
-                    plt.ylabel("# reported IPs")
-                    # plt.yscale("log")
-                    plt.grid(True)
-                    plt.title(asn)
-                    fig.autofmt_xdate()
-                    plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_crazyIP.eps" % (asn, u)))
-                    plt.close()
-                except ValueError:
-                    pass
+            # # Number ips
+            # for u in ["corrAbs", "pktDiffAbs", "resp"]:
+                # if u == "resp":
+                    # dfip = dfasn[dfasn[u]>0.9]
+                # else:
+                    # dfip = dfasn[dfasn[u]>10]
+                # grpCrazyIP = dfip.groupby(["timeBin"])
+                # try:
+                    # grpCrazy = grpCrazyIP.count()
+                    # grpCount = grp.count()
+                    # fig = plt.figure(figsize=(10,4))
+                    # plt.plot(grpCount.index, grpCount["ip"], label="total")
+                    # plt.plot(grpCrazy.index, grpCrazy["ip"], label="crazy")
+                    # plt.ylabel("# reported IPs")
+                    # # plt.yscale("log")
+                    # plt.grid(True)
+                    # plt.title(asn)
+                    # fig.autofmt_xdate()
+                    # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_crazyIP.eps" % (asn, u)))
+                    # plt.close()
+                # except ValueError:
+                    # pass
                 
     return df
 
