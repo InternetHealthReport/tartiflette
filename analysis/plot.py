@@ -616,7 +616,7 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
         cursor = collection.find( {
                 "expId": exp["_id"], 
                 # "expId": objectid.ObjectId("5680df61f789371d76d2f0d6"), 
-                "corr": {"$lt": -0.5},
+                # "corr": {"$lt": -0.5},
                 # "timeBin": {"$lt": datetime.datetime(2015,6,20, 0, 0, tzinfo=timezone("UTC"))},
                 # "nbSamples": {"$gt": 10},
             }, 
@@ -643,13 +643,13 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
         print "Compute stuff" # (%s rows)" % cursor.count() 
         for i, row in enumerate(cursor):
             print "%dk \r" % (i/1000), 
-            obsDict = eval("{"+row["obsNextHops"].partition("{")[2][:-1])
-            refDict = eval("{"+row["refNextHops"].partition("{")[2][:-1])
+            obsList = row["obsNextHops"] #eval("{"+row["obsNextHops"].partition("{")[2][:-1])
+            refDict = dict(row["refNextHops"]) #eval("{"+row["refNextHops"].partition("{")[2][:-1])
             sumPktDiff = 0
-            for ip, pkt in obsDict.iteritems():
+            for ip, pkt in obsList:
                 sumPktDiff += np.abs(pkt - refDict[ip])
 
-            for ip, pkt in obsDict.iteritems():
+            for ip, pkt in obsList:
                 if ip == "0":
                     continue
 
@@ -900,7 +900,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
                 # "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 #"expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 "expId": exp["_id"], 
-                "timeBin": {"$gt": datetime.datetime(2015,6,15)},
+                # "timeBin": {"$gt": datetime.datetime(2015,6,15)},
                 # "nbProbeASN": {"$gt": 2},
                 # "asnEntropy": {"$gt": 0.5},
                 # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
@@ -1009,8 +1009,8 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
     if plotAsnData or exportCsv:
         for asn_name in df["asn_name"].unique():
 
-            asn = asn_name.partition(" ")[0]
-            asname = asn_name.partition(" ")[2]
+            asn = asn_name[0]
+            asname = asn_name[1]
             fig = plt.figure(figsize=(10,4))
             dfasn = df[df["asn"] == asn]
             grp = dfasn.groupby("timeBin")
@@ -1026,7 +1026,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
             grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize))/(1.4826*pd.rolling_apply(grpSum[metric],historySize,mad))
 
             if exportCsv:
-                asnFile.write("%s,%s\n" % (asn, asname))
+                asnFile.write('%s,"%s"\n' % (asn, asname))
                 dftmp = pd.DataFrame(grpSum)
                 dftmp["asn"] = asn
                 dftmp["timeBin"] = dftmp.index
@@ -1167,14 +1167,16 @@ def rttRefStats(ref=None):
         # ref = pickle.load(open("./saved_references/5680de2af789371baee2d573_inferred.pickle"))
         # ref = pickle.load(open("./saved_references/5690b974f789370712b97cb4_inferred.pickle"))
         # ref = pickle.load(open("./saved_references/5693c2e0f789373763a0bdf7_inferred.pickle"))
-        ref = pickle.load(open("saved_references/56ae94f1f789376c5fbd8bd8_diffRTT.pickle"))
+        ref = pickle.load(open("saved_references/56d9b1cbb0ab021cc2102c10_diffRTT.pickle"))
+
 
     print "%s ip pairs" % len(ref)
  
     #### confidence intervals
-    confUp = map(lambda x: x["high"] - x["mean"], ref.itervalues())
-    confDown = map(lambda x: x["mean"] - x["low"], ref.itervalues())
-    confSize = map(lambda x: x["high"] - x["low"], ref.itervalues())
+    confUp = map(lambda x: np.mean(x["high"]) - np.mean(x["mean"]), ref.itervalues())
+    confDown = map(lambda x: np.mean(x["mean"]) - np.mean(x["low"]), ref.itervalues())
+    confSize = map(lambda x: np.mean(x["high"]) - np.mean(x["low"]), ref.itervalues())
+    nbSeen = map(lambda x: int(x["nbSeen"]), ref.itervalues())
 
     print "upper confidence interval size: %s (+- %s)" % (np.mean(confUp), np.std(confUp))
     print "\t min=%s max=%s" % (np.min(confUp), np.max(confUp))
@@ -1221,16 +1223,34 @@ def rttRefStats(ref=None):
     # correlation between the number of probes and the conf. interval size?
 
     confSize = np.array(confSize)
-    idx0 = (confSize < 30000000)
+    idx0 = (confSize < 10000000)
     nbProbes = np.array(nbProbes)
-    idx1 = (nbProbes < 65000000000)
+    idx1 = (nbProbes > 3)
+    nbSeen = np.array(nbSeen)
+    idx0 = (nbSeen > 24)
+    print idx0
+    print confSize[idx0 & idx1]
+    print nbProbes[idx0 & idx1]
     print np.corrcoef(confSize[idx0 & idx1], nbProbes[idx0 & idx1])
     print stats.spearmanr(confSize[idx0 & idx1], nbProbes[idx0 & idx1])
+    plt.figure(figsize=(4,3))
+    plt.plot(nbProbes[idx0 & idx1], confSize[idx0 & idx1], ".", ms=2)
+    plt.xlabel("# probes")
+    plt.ylabel("Ref. size")
+    plt.grid(True, color="0.5")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.tight_layout()
+    plt.savefig("fig/rttChange_nbProbes_vs_refSize.eps")
 
     #### Number of times seen / reported
     nbSeen = np.array([x["nbSeen"] for x in ref.itervalues()])
     nbReported = np.array([x["nbReported"] for x in ref.itervalues()])
     obsPeriod = np.array([1+(x["lastSeen"]-x["firstSeen"]).total_seconds() / 3600 for x in ref.itervalues()])
+    nbReportedLinks = np.sum(nbReported != 0)
+    nbNotReportedLinks = np.sum(nbReported == 0)
+    print "%s (%s%%) reported links" % (nbReportedLinks, nbReportedLinks/float(len(ref)))
+    print "%s (%s%%) not reported links" % (nbNotReportedLinks, nbNotReportedLinks/float(len(ref)))
     
     plt.figure(figsize=(4,3))
     ecdf(nbSeen)
@@ -1318,3 +1338,5 @@ def rttRefStats(ref=None):
     plt.tight_layout()
     plt.savefig("fig/rttChange_ref_endLinks.eps")
     plt.close()
+
+    return ref
