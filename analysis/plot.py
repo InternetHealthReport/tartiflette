@@ -63,6 +63,7 @@ def rttEvolution(res, ips, suffix):
     alarmsDates = []
     alarmsValues = []
     median = []
+    mean = []
     ciLow = []
     ciHigh = []
     dates = []
@@ -82,21 +83,22 @@ def rttEvolution(res, ips, suffix):
             continue
         dates.append(d)
         median.append(np.median(dist))
+        mean.append(np.mean(dist))
         dist.sort()
         wilsonCi = sm.stats.proportion_confint(len(dist)/2, len(dist), 0.05, "wilson")
         wilsonCi = np.array(wilsonCi)*len(dist)
         ciLow.append( median[-1] - dist[int(wilsonCi[0])] )
         ciHigh.append( dist[int(wilsonCi[1])] - median[-1] )
 
-        if len(smoothAvg)<3:
+        if len(smoothAvg)<18:
             smoothAvg.append(median[-1])
             smoothHi.append(dist[int(wilsonCi[1])])
             smoothLow.append(dist[int(wilsonCi[0])])
-        elif len(smoothAvg)==3:
+        elif len(smoothAvg)==18:
             smoothAvg.append(np.median(smoothAvg))
             smoothHi.append(np.median(smoothHi))
             smoothLow.append(np.median(smoothLow))
-            for i in range(3):
+            for i in range(18):
                 smoothAvg[i] = smoothAvg[-1]
                 smoothHi[i] = smoothHi[-1]
                 smoothLow[i] = smoothLow[-1]
@@ -112,34 +114,51 @@ def rttEvolution(res, ips, suffix):
     if len(median)<2:
         return 0
 
-    fig = plt.figure(figsize=(10,4))
+    fig = plt.figure(figsize=(12,4))
     boundref = plt.fill_between(dates, smoothLow, smoothHi, color="#3333cc", facecolor="#DDDDFF", label="Normal Reference")
     # Workarround to have the fill_between in the legend
     boundref = plt.Rectangle((0, 0), 1, 1, fc="#DDDDFF", color="#3333cc")
     medianref, = plt.plot(dates, smoothAvg, '-', color="#AAAAFF")
     # plt.plot(dates, smoothHi, 'k--')
     # plt.plot(dates, smoothLow, 'k--')
-    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=5, color="black", ecolor='0.25', label="Diff. RTT")
+    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=7, color="black", ecolor='0.33', label="Diff. RTT")
     ano, = plt.plot(alarmsDates, alarmsValues, "r*", ms=10, label="Anomaly")
     plt.grid(True, color="0.75")
-    plt.title("%s - %s" % ips)
+    # plt.title("%s - %s" % ips)
+    plt.title("%s (Cogent, ZRH) - %s (Cogent, MUC)" % ips)
     fig.autofmt_xdate()
-    plt.legend([data, (boundref, medianref), ano],["Median Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
-    plt.ylabel("Diff. RTT (ms)")
+    # plt.legend([data, (boundref, medianref), ano],["Median Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    plt.legend([data, (boundref, medianref)],["Median Diff. RTT", "Normal Reference"], loc="best")
+    plt.ylabel("Differential RTT (ms)")
     # plt.yscale("log")
+    plt.tight_layout()
     plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarmsDates)))
     plt.close()
 
-    f, ax = plt.subplots(1,1,figsize=(4.8,3.6))
+    f, ax = plt.subplots(1,1,figsize=(3.2,2.4))
+    plt.ylim([-4, 4])
+    plt.xlim([-4, 4])
     sm.qqplot(np.array(median), line="45", fit=True, ax=ax)
-    plt.title("%s - %s" % ips)
+    # plt.title("Median")
     plt.grid(True, color="0.75")
-    plt.title("%s - %s" % ips)
     plt.ylabel("Median diff. RTT quantiles")
     plt.xlabel("Normal theoretical quantiles")
+    plt.ylim([-4, 4])
+    plt.xlim([-4, 4])
     plt.tight_layout()
-    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot.eps" % (ips[0], ips[1], len(alarmsDates)))
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot_median.eps" % (ips[0], ips[1], len(alarmsDates)))
     plt.close()
+
+    f, ax = plt.subplots(1,1,figsize=(3.2,2.4))
+    sm.qqplot(np.array(mean), line="45", fit=True, ax=ax)
+    # plt.title("Mean")
+    plt.grid(True, color="0.75")
+    plt.ylabel("Mean diff. RTT quantiles")
+    plt.xlabel("Normal theoretical quantiles")
+    plt.tight_layout()
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot_mean.eps" % (ips[0], ips[1], len(alarmsDates)))
+    plt.close()
+
 
     plt.figure()
     plt.hist(rttDiff[0], bins=150)
@@ -152,7 +171,13 @@ def rttEvolution(res, ips, suffix):
     plt.plot(rttDiff[1], rttDiff[0],"x")
     plt.grid(True)
     # plt.yscale("log")
-    plt.title("%s - %s" % ips)
+    dat = np.array(rttDiff[0])
+    m = np.mean(dat)
+    s = np.std(dat)
+    o = np.sum((dat>m+3*s) | (dat<m-3*s))
+    operc = o/float(len(dat))
+
+    plt.title("%s - %s (mean=%.02f, std=%.02f, outliers=%s %.02f%%)" % (ips[0], ips[1], m, s, o, operc))
     fig.autofmt_xdate() 
     plt.savefig("fig/diffRtt/%s_%s_samples.eps" % (ips[0], ips[1]))
     plt.close()
@@ -179,7 +204,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     db = client.atlas
     detectionExperiments = db.rttExperiments
     alarmsCollection = db.rttChanges
-    expId = detectionExperiments.insert_one(expParam).inserted_id 
+    # expId = detectionExperiments.insert_one(expParam).inserted_id 
 
     sampleMediandiff = {}
     ip2asn = {}
