@@ -325,7 +325,7 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
                 # "historySize": 24*7,  # 7 days
                 "start": datetime(2015, 5, 1, 0, 0, tzinfo=timezone("UTC")), 
                 # "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
-                "end":   datetime(2015, 8, 1, 0, 0, tzinfo=timezone("UTC")),
+                "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
                 # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
                 "alpha": 0.01, 
                 "confInterval": 0.05,
@@ -333,8 +333,8 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
                 "minASNEntropy": 0.5,
                 "minSeen": 3,
                 "experimentDate": datetime.now(),
-                "af": "",
-                "comment": "60 min Oct to Dec. 2015",
+                "af": "6",
+                "comment": "May to Dec 2015, IPv6",
                 "prefixes": None
                 }
 

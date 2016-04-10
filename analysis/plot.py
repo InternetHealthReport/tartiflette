@@ -30,6 +30,7 @@ import functools
 import socket
 import cPickle as pickle
 import gc
+import networkx as nx
 
 # from matplotlib import rc
 # rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
@@ -88,15 +89,15 @@ def rttEvolution(res, ips, suffix):
         ciLow.append( median[-1] - dist[int(wilsonCi[0])] )
         ciHigh.append( dist[int(wilsonCi[1])] - median[-1] )
 
-        if len(smoothAvg)<3:
+        if len(smoothAvg)<24:
             smoothAvg.append(median[-1])
             smoothHi.append(dist[int(wilsonCi[1])])
             smoothLow.append(dist[int(wilsonCi[0])])
-        elif len(smoothAvg)==3:
+        elif len(smoothAvg)==24:
             smoothAvg.append(np.median(smoothAvg))
             smoothHi.append(np.median(smoothHi))
             smoothLow.append(np.median(smoothLow))
-            for i in range(3):
+            for i in range(24):
                 smoothAvg[i] = smoothAvg[-1]
                 smoothHi[i] = smoothHi[-1]
                 smoothLow[i] = smoothLow[-1]
@@ -105,7 +106,7 @@ def rttEvolution(res, ips, suffix):
             smoothHi.append(0.99*smoothHi[-1]+0.01*dist[int(wilsonCi[1])])
             smoothLow.append(0.99*smoothLow[-1]+0.01*dist[int(wilsonCi[0])])
 
-            if median[-1]-ciLow[-1] > smoothHi[-1] or median[-1]+ciHigh[-1] < smoothLow[-1]: 
+            if (median[-1]-ciLow[-1] > smoothHi[-1] or median[-1]+ciHigh[-1] < smoothLow[-1]) and np.abs(median[-1]-smoothAvg[-1])>1: 
                 alarmsDates.append(d)
                 alarmsValues.append(median[-1])
 
@@ -159,13 +160,15 @@ def rttEvolution(res, ips, suffix):
 
     return len(alarmsDates)
 
-def getRttData():
+def getRttData(configFile=None):
     """
 
 Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     """
 
-    configFile = "conf/getRttData.conf"
+    if configFile is None:
+        configFile = "conf/getRttData.conf"
+
     if os.path.exists(configFile):
         expParam = json.load(open(configFile,"r"), object_hook=json_util.object_hook)
     else:
@@ -215,7 +218,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
         for k,v in diffRtt.iteritems():
             rawDiffRtt[k].extend(v["rtt"])
-            # rawNbProbes[k].extend(v["probe"])
+            rawNbProbes[k].extend(v["probe"])
             rawDates[k].extend([c]*len(v["rtt"]))
 
         timeSpent = (time.time()-tsS)
@@ -226,6 +229,29 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
     return (rawDiffRtt, rawNbProbes, rawDates)
 
+def makeGraph(timeBin):
+    db = tools.connect_mongo()
+    collection = db.rttChanges
+
+    cursor = collection.find({
+        "expId": objectid.ObjectId("56d9b1cbb0ab021cc2102c10"),
+        # "timeBin": {"$in": timeBin},
+        "timeBin": timeBin,
+        "deviation": {"$gt": 3}
+        })
+
+    g = nx.Graph()
+    for alarm in cursor:
+        g.add_edge(alarm["ipPair"][0], alarm["ipPair"][1],{"dev":alarm["deviation"], "diff":alarm["diff"]})
+
+    cursor = collection.find({
+        "expId": objectid.ObjectId(""),
+        "timeBin": timeBin,
+        }) 
+    #TODO add forwarding anomalies
+
+    nx.write_gml(g, "graph/%s.gml" % timeBin)
+    return g
 
 def nbRttChanges(df=None, suffix="" ):
 
