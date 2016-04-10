@@ -9,7 +9,7 @@ import gzip
 # def importMongo(path,collection, db=None):
 
     # if db is None:
-        # client = pymongo.MongoClient("mongodb-iijlab")
+        # client = pymongo.MongoClient("mongodb-ikebukuro")
         # db = client.atlas
     # col = db[collection]
 
@@ -33,7 +33,7 @@ def importRangeOfDates(start, end, msmType, af=""):
     else:
         aflabel = af
 
-    client = pymongo.MongoClient("mongodb-iijlab")
+    client = pymongo.MongoClient("mongodb-ikebukuro")
     db = client.atlas
 
     nbDays = (end-start).days
@@ -51,7 +51,7 @@ def importRangeOfDates(start, end, msmType, af=""):
 
             msmIdFile = "./%sMsmIdsv%s.txt" % (msmType, aflabel)
 
-            os.system("zcat %s | grep -f %s | mongoimport -h mongodb-iijlab -d atlas -c %s " % (
+            os.system("zcat %s | grep -f %s | mongoimport -h mongodb-ikebukuro -d atlas -c %s " % (
                                                         filename, msmIdFile, colName))
 
             col.create_index("timestamp", background=True)
