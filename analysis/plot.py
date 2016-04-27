@@ -57,6 +57,17 @@ def prefixDiffRtt(res, prefix=None, minPts=20):
     print " %s alarms in total" % nbAlarms
 
 def rttEvolution(res, ips, suffix):
+    ipNames = {
+            "193.0.14.129": "K-root",
+            "80.81.192.154": "RIPE NCC @ DE-CIX",
+            "61.213.160.62": "NTT, Tokyo",
+            "72.52.92.14": "HE, Frankfurt",
+            "74.208.6.124": "1&1, Kansas City",
+            "212.191.229.90": "Poznan, PL",
+            "188.93.16.77": "Selectel, St. Petersburg",
+            "95.213.189.0": "Selectel, Moscow",
+            }
+
     rttDiff = np.array(res)
     smoothAvg = []
     smoothHi = []
@@ -115,7 +126,7 @@ def rttEvolution(res, ips, suffix):
     if len(median)<2:
         return 0
 
-    fig = plt.figure(figsize=(12,4))
+    fig = plt.figure(figsize=(9,3))
     boundref = plt.fill_between(dates, smoothLow, smoothHi, color="#3333cc", facecolor="#DDDDFF", label="Normal Reference")
     # Workarround to have the fill_between in the legend
     boundref = plt.Rectangle((0, 0), 1, 1, fc="#DDDDFF", color="#3333cc")
@@ -125,15 +136,19 @@ def rttEvolution(res, ips, suffix):
     data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=7, color="black", ecolor='0.33', label="Diff. RTT")
     ano, = plt.plot(alarmsDates, alarmsValues, "r*", ms=10, label="Anomaly")
     plt.grid(True, color="0.75")
-    # plt.title("%s - %s" % ips)
-    plt.title("%s (Cogent, ZRH) - %s (Cogent, MUC)" % ips)
+    if ips[0] in ipNames and ips[1] in ipNames:
+        plt.title("%s (%s) - %s (%s)" % (ips[0],ipNames[ips[0]],ips[1],ipNames[ips[1]]))
+    else:
+        plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
-    # plt.legend([data, (boundref, medianref), ano],["Median Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
-    plt.legend([data, (boundref, medianref)],["Median Diff. RTT", "Normal Reference"], loc="best")
+    if len(alarmsValues):
+        plt.legend([data, (boundref, medianref), ano],["Median Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
+    else:
+        plt.legend([data, (boundref, medianref)],["Median Diff. RTT", "Normal Reference"], loc="best")
     plt.ylabel("Differential RTT (ms)")
     # plt.yscale("log")
     plt.tight_layout()
-    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0], ips[1], len(alarmsDates)))
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_rttModel.eps" % (ips[0].replace(".","_"), ips[1].replace(".","_"), len(alarmsDates)))
     plt.close()
 
     f, ax = plt.subplots(1,1,figsize=(3.2,2.4))
@@ -147,7 +162,7 @@ def rttEvolution(res, ips, suffix):
     plt.ylim([-4, 4])
     plt.xlim([-4, 4])
     plt.tight_layout()
-    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot_median.eps" % (ips[0], ips[1], len(alarmsDates)))
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot_median.eps" % (ips[0].replace(".","_"), ips[1].replace(".","_"), len(alarmsDates)))
     plt.close()
 
     f, ax = plt.subplots(1,1,figsize=(3.2,2.4))
@@ -157,7 +172,7 @@ def rttEvolution(res, ips, suffix):
     plt.ylabel("Mean diff. RTT quantiles")
     plt.xlabel("Normal theoretical quantiles")
     plt.tight_layout()
-    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot_mean.eps" % (ips[0], ips[1], len(alarmsDates)))
+    plt.savefig("fig/diffRtt/%s_%s_%sAlarms_qqplot_mean.eps" % (ips[0].replace(".","_"), ips[1].replace(".","_"), len(alarmsDates)))
     plt.close()
 
 
@@ -165,7 +180,7 @@ def rttEvolution(res, ips, suffix):
     plt.hist(rttDiff[0], bins=150)
     plt.grid(True, color="0.75")
     plt.yscale("log")
-    plt.savefig("fig/diffRtt/%s_%s_distributionSamples.eps" % (ips[0], ips[1]))
+    plt.savefig("fig/diffRtt/%s_%s_distributionSamples.eps" % (ips[0].replace(".","_"), ips[1].replace(".","_")))
     plt.close()
 
     fig = plt.figure(figsize=(10,4))
@@ -180,7 +195,7 @@ def rttEvolution(res, ips, suffix):
 
     plt.title("%s - %s (mean=%.02f, std=%.02f, outliers=%s %.02f%%)" % (ips[0], ips[1], m, s, o, operc))
     fig.autofmt_xdate() 
-    plt.savefig("fig/diffRtt/%s_%s_samples.eps" % (ips[0], ips[1]))
+    plt.savefig("fig/diffRtt/%s_%s_samples.eps" % (ips[0].replace(".","_"), ips[1].replace(".","_")))
     plt.close()
 
     return len(alarmsDates)
@@ -243,7 +258,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
         for k,v in diffRtt.iteritems():
             rawDiffRtt[k].extend(v["rtt"])
-            rawNbProbes[k].extend(v["probe"])
+            # rawNbProbes[k].extend(v["probe"])
             rawDates[k].extend([c]*len(v["rtt"]))
 
         timeSpent = (time.time()-tsS)
@@ -262,21 +277,107 @@ def makeGraph(timeBin):
         "expId": objectid.ObjectId("56d9b1cbb0ab021cc2102c10"),
         # "timeBin": {"$in": timeBin},
         "timeBin": timeBin,
-        "deviation": {"$gt": 3}
+        # "$or": [{"diffMed":{"$lt": -1}}, {"diffMed":{"$gt": 1}}]
+        # "diffMed": 
         })
 
     g = nx.Graph()
     for alarm in cursor:
-        g.add_edge(alarm["ipPair"][0], alarm["ipPair"][1],{"dev":alarm["deviation"], "diff":alarm["diff"]})
+        g.add_edge(alarm["ipPair"][0], alarm["ipPair"][1],{"dev":alarm["deviation"], "diffMed":alarm["diffMed"]})
 
-    cursor = collection.find({
-        "expId": objectid.ObjectId(""),
-        "timeBin": timeBin,
-        }) 
+    # cursor = collection.find({
+        # "expId": objectid.ObjectId(""),
+        # "timeBin": timeBin,
+        # }) 
     #TODO add forwarding anomalies
 
     nx.write_gml(g, "graph/%s.gml" % timeBin)
     return g
+
+def countASN(g):
+    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+
+    count = defaultdict(int)
+    for e in g.edges():
+        s = set([asn_by_addr(e[0],gi), asn_by_addr(e[1],gi)])
+
+        for asn in s:
+            count[asn]+=1
+
+    return count
+
+
+def countRootServers(ref, gList, af=4):
+
+    rootIpv4 = {"a.root-servers.net": "198.41.0.4", #2001:503:ba3e::2:30 VeriSign, Inc.
+            "b.root-servers.net":  "192.228.79.201", #2001:500:84::b  University of Southern California (ISI)
+            "c.root-servers.net":  "192.33.4.12", #2001:500:2::c  Cogent Communications
+            "d.root-servers.net":  "199.7.91.13", #2001:500:2d::d University of Maryland
+            "e.root-servers.net":  "192.203.230.10", #NASA (Ames Research Center)
+            "f.root-servers.net":  "192.5.5.241", #2001:500:2f::f Internet Systems Consortium, Inc.
+            "g.root-servers.net":  "192.112.36.4",#    US Department of Defense (NIC)
+            "h.root-servers.net":  "198.97.190.53", #2001:500:1::53   US Army (Research Lab)
+            "i.root-servers.net":  "192.36.148.17", #2001:7fe::53 Netnod
+            "j.root-servers.net":  "192.58.128.30", #2001:503:c27::2:30   VeriSign, Inc.
+            "k.root-servers.net":  "193.0.14.129", #2001:7fd::1   RIPE NCC
+            "l.root-servers.net":  "199.7.83.42", #2001:500:9f::42    ICANN
+            "m.root-servers.net":  "202.12.27.33", #2001:dc3::35  WIDE Project
+            }
+    rootIpv6 = {"a.root-servers.net": "2001:503:ba3e::2:30", # VeriSign, Inc.
+            "b.root-servers.net":  "2001:500:84::b", #  University of Southern California (ISI)
+            "c.root-servers.net":  "2001:500:2::c", #  Cogent Communications
+            "d.root-servers.net":  "2001:500:2d::d", # University of Maryland
+            # "e.root-servers.net":  "192.203.230.10", #NASA (Ames Research Center)
+            "f.root-servers.net":  "2001:500:2f::f", # Internet Systems Consortium, Inc.
+            # "g.root-servers.net":  "192.112.36.4",#    US Department of Defense (NIC)
+            "h.root-servers.net":  "2001:500:1::53", #   US Army (Research Lab)
+            "i.root-servers.net":  "2001:7fe::53", # Netnod
+            "j.root-servers.net":  "2001:503:c27::2:30", #   VeriSign, Inc.
+            "k.root-servers.net":  "2001:7fd::1", #   RIPE NCC
+            "l.root-servers.net":  "2001:500:9f::42", #    ICANN
+            "m.root-servers.net":  "2001:dc3::35", #  WIDE Project
+            }
+
+    if af == 4:
+        rootIps = rootIpv4
+    elif af == 6:
+        rootIps = rootIpv6
+
+    count = {}
+    for k in rootIps.values():
+        count[k] = {"all": set(), "reported": set()}
+
+    for k in ref.keys():
+        root = None
+        if k[0] in rootIps.values():
+            root = k[0]
+        elif k[1] in rootIps.values():
+            root = k[1]
+
+        if not root is None:
+            count[root]["all"].add(k)
+
+    for g in gList:
+        for k in g.edges_iter():
+            root = None
+            if k[0] in rootIps.values():
+                root = k[0]
+            elif k[1] in rootIps.values():
+                root = k[1]
+
+            if not root is None:
+                count[root]["reported"].add(k)
+
+    totalReported=0
+    for k,v in count.iteritems():
+        print "%s: %s out of %s reported pairs" % (k, len(v["reported"]), len(v["all"]))
+        totalReported+=len(v["reported"])
+
+    print "Total reported: %s" % totalReported
+
+    return count
+
+
 
 def nbRttChanges(df=None, suffix="" ):
 
@@ -614,8 +715,8 @@ def tfidf(df, events, metric, historySize, threshold, ax=None, group=None):
 
         voca = {}
         # voca["country"] = dfwin["country"].unique()
-        if "asn" in dfwin.columns:
-            voca["asn"] = dfwin["asn"].unique()
+        # if "asn" in dfwin.columns:
+            # voca["asn"] = dfwin["asn"].unique()
         if "prefix/24" in dfwin.columns: 
             voca["prefix/24"] = dfwin["prefix/24"].unique()
         for col, words in voca.iteritems():
@@ -667,8 +768,9 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
         cursor = collection.find( {
                 "expId": exp["_id"], 
                 # "expId": objectid.ObjectId("5680df61f789371d76d2f0d6"), 
-                # "corr": {"$lt": -0.5},
-                # "timeBin": {"$lt": datetime.datetime(2015,6,20, 0, 0, tzinfo=timezone("UTC"))},
+                "corr": {"$lt": -0.2},
+                "timeBin": {"$gt": datetime.datetime(2015,11,1, 0, 0, tzinfo=timezone("UTC"))},
+                "nbPeers": {"$gt": 2},
                 # "nbSamples": {"$gt": 10},
             }, 
             [ 
@@ -913,11 +1015,13 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
 
 
 def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_minScore=0.7,
-        metric="devBound", unit = "devBound", historySize=7*24, exportCsv=False):
+        metric="devBound", unit = "devBound", historySize=7*24, exportCsv=False, pltTitle=""):
     
     if ref is None:
         db = tools.connect_mongo()
-        exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        # exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} # IPv4 
+        exp = {"_id": objectid.ObjectId("56fe4405b0ab02f369ca8d2a")} # IPv6 
+        #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
         savedRef = pickle.load(open("saved_references/%s_diffRTT.pickle" % exp["_id"]))
@@ -952,7 +1056,8 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
                 # "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 #"expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 "expId": exp["_id"], 
-                # "timeBin": {"$gt": datetime.datetime(2015,6,15)},
+                "timeBin": {"$gt": datetime.datetime(2015,11,1, 0, 0, tzinfo=timezone("UTC"))},
+                "diffMed": {"$gt": 1},
                 # "nbProbeASN": {"$gt": 2},
                 # "asnEntropy": {"$gt": 0.5},
                 # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
@@ -1035,15 +1140,15 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
     # group["metric"] = (group[metric]-pd.rolling_mean(group[metric],historySize))/(pd.rolling_std(group[metric],historySize))
     events = group[group["metric"]> tau]
 
-    fig = plt.figure(figsize=(10,4))
+    fig = plt.figure(figsize=(9,3))
     ax = fig.add_subplot(111)
     ax.plot(group.index, group["metric"])
     ax.grid(True)
     # plt.ylim([-2, 14])
     # plt.yscale("log")
     # plt.ylabel("Accumulated deviation")
-    plt.ylabel("magnitude")
-    # plt.title(metric)
+    plt.ylabel("Magnitude (delay change)")
+    plt.title(pltTitle)
     
     print "Found %s events" % len(events)
     print events
@@ -1052,6 +1157,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         alarms = tfidf(df, events, metric, historySize, tfidf_minScore, ax, group)
     
     fig.autofmt_xdate()
+    plt.tight_layout()
     plt.savefig("fig/tfidf_%s.eps" % metric)
 
     if exportCsv:
