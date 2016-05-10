@@ -1,5 +1,10 @@
 # ripeAtlasDetector
 
+Pinpointing delay and forwarding anomalies from large-scale traceroute measurements.
+
+Our results with the RIPE Atlas traceroute data is available here: http://romain.iijlab.net/iwr/reports/
+
+
 ## Requirements
 - pandas
 - matplotlib
