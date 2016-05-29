@@ -1687,3 +1687,140 @@ def routeRefStat(ref):
 
     return (nbHops, nbReported)
 
+
+def exportAlarmsCsv(rtt="./results/csv/rttAlarms.csv", route="./results/csv/routeAlarms.csv"):
+    
+    if not route is None:
+        fi = open(route,"w")
+
+        print "Retrieving forwarding alarms"
+        db = tools.connect_mongo()
+        collection = db.routeChanges
+
+        exp = db.routeExperiments.find_one({}, sort=[("$natural", -1)] )
+
+        cursor = collection.find( {
+                # "expId": exp["_id"], 
+                "expId": objectid.ObjectId("56d9b1eab0ab021d00224ca8"),  # ipv4
+                "corr": {"$lt": -0.2},
+                # "timeBin": {"$gt": datetime.datetime(2015,5,1, 0, 0, tzinfo=timezone("UTC")), "$lt": datetime.datetime(2015,6,1, 0, 0, tzinfo=timezone("UTC"))},
+                # "timeBin": {"$gt": datetime.datetime(2015,11,1, 0, 0, tzinfo=timezone("UTC"))},
+                "nbPeers": {"$gt": 2},
+                # "nbSamples": {"$gt": 10},
+            }, 
+            [ 
+                "obsNextHops",
+                "refNextHops",
+                "timeBin",
+                "ip",
+                "nbSamples",
+                # "nbPeers",
+                # "nbSeen",
+                # "nbProbes":1,
+                # "diff":1,
+                "corr",
+            # ], limit=300000
+            ],
+            # limit=200000
+            )
+        
+        gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+
+        print "Compute stuff" # (%s rows)" % cursor.count() 
+        for i, row in enumerate(cursor):
+            data = {"timeBin":[], "corr": [], "router":[],  "ip": [], 
+                    "pktDiff": [], "nbSamples": [],  "resp": []} 
+            print "%dk \r" % (i/1000), 
+            obsList = row["obsNextHops"] 
+            refDict = dict(row["refNextHops"]) 
+            sumPktDiff = 0
+            for ip, pkt in obsList:
+                sumPktDiff += np.abs(pkt - refDict[ip])
+
+            for ip, pkt in obsList:
+                if ip == "0":
+                    continue
+
+                pktDiff = pkt - refDict[ip] 
+                pktDiffAbs = np.abs(pktDiff)
+                corrAbs = np.abs(row["corr"])
+                data["pktDiff"].append(pktDiff)
+                data["router"].append(row["ip"])
+                data["timeBin"].append(row["timeBin"])
+                data["corr"].append(row["corr"])
+                data["ip"].append(ip)
+                data["nbSamples"].append(row["nbSamples"])
+                data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
+
+            maxInd = np.argmax(data["resp"])
+            minInd = np.argmin(data["resp"])
+            
+            fi.write("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" % (
+                data["timeBin"][maxInd], data["router"][maxInd],
+                data["corr"][maxInd], data["nbSamples"][maxInd],
+                data["ip"][minInd],asn_by_addr(data["ip"][minInd], db=gi)[0],
+                data["resp"][minInd], data["pktDiff"][minInd],
+                data["ip"][maxInd],asn_by_addr(data["ip"][maxInd], db=gi)[0],
+                data["resp"][maxInd], data["pktDiff"][maxInd]
+             ))
+        fi.close() 
+
+    if not rtt is None:
+        fi = open(rtt,"w")
+        print "Retrieving Delay Change Alarms"
+        db = tools.connect_mongo()
+        collection = db.rttChanges
+
+        # exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        print "Looking at experiment: %s" % exp["_id"]
+
+        cursor = collection.aggregate([
+            {"$match": {
+                # "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
+                #"expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
+                "expId": exp["_id"], 
+                # "timeBin": {"$gt": datetime.datetime(2015,6,1, 0, 0, tzinfo=timezone("UTC")), "$lt": datetime.datetime(2015,7,1, 0, 0, tzinfo=timezone("UTC"))},
+                "diffMed": {"$gt": 1},
+                # "nbProbeASN": {"$gt": 2},
+                # "asnEntropy": {"$gt": 0.5},
+                # "expId": objectid.ObjectId("567f808ff7893768932b8334"), # probe diversity June 2015
+                # "expId": objectid.ObjectId("5680de2af789371baee2d573"), # probe diversity 
+                # "nbProbes": {"$gt": 4},
+                }}, 
+            {"$project": {
+                "ipPair":1,
+                "timeBin":1,
+                "nbProbes":1,
+                "entropy":1,
+                "nbSamples":1,
+                "diffMed":1,
+                "median":1,
+                "ref": 1,
+                "devBound": 1,
+                }},
+            ])
+
+        df =  pd.DataFrame(list(cursor))
+        df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+        df.set_index("timeBin")
+        print "got the data"
+
+        if "asn" not in df.columns:
+            print "find AS numbers"
+            # find ASN for each ip
+            # ga = pygeoip.GeoIP("../lib/GeoIPASNumv6.dat")
+            ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+            fct = functools.partial(asn_by_addr, db=ga)
+            ipPair = df["ipPair"].apply(pd.Series)
+            df["ip0"] = ipPair[0]
+            df["ip1"] = ipPair[1]
+            df["asn0"] = df["ip0"].apply(fct).apply(pd.Series)[0]
+            df["asn1"] = df["ip1"].apply(fct).apply(pd.Series)[0]
+
+        
+        df["label"] = "none" #TODO add tfidf results
+        df.to_csv(fi, columns=["timeBin","asn0","asn1","ip0","ip1",
+            "devBound","diffMed","ref","median","label"],
+            header=False, index=False, date_format="%Y-%m-%d %H:%M:%S+00", na_rep="0")
+        fi.close()
