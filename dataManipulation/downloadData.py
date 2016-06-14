@@ -1,14 +1,16 @@
+import sys
 import os 
 from datetime import datetime
 from datetime import timedelta
 from datetime import date
+from dateutil import relativedelta
 from ripe.atlas.cousteau import AtlasResultsRequest 
 import json
 import pymongo
 import gzip
 
 
-def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], reverse=False, split=0, timeWindow = timedelta(minutes=60) ):
+def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], reverse=False, split=0, timeWindow = timedelta(minutes=24*60) ):
     errors = []
 
     # storage = "mongo"
@@ -78,9 +80,11 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], rev
 
                         else:
                             errors.append("%s: msmId=%s" % (currDate, msmId))
+                            print "error: %s: msmId=%s" % (currDate, msmId)
 
                     except ValueError:
                         errors.append("%s: msmId=%s" % (currDate, msmId))
+                        print "error: %s: msmId=%s" % (currDate, msmId)
 
                     finally:
                         currDate += timeWindow
@@ -93,6 +97,11 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], rev
 
 if __name__ == "__main__":
     # download yesterday's data
-    yesterday = date.today() - timedelta(days=1)
+    if len(sys.argv) < 5:
+        print "usage: %s year month (builtin, anchor) af" % sys.argv[0]
+        sys.exit()
 
-    downloadData(yesterday, date.today())
+    start = datetime(int(sys.argv[1]), int(sys.argv[2]), 1)
+    end= start + relativedelta.relativedelta(months=1)
+
+    downloadData(start, end, [sys.argv[3]], [int(sys.argv[4])] )
