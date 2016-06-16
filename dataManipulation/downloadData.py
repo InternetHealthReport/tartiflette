@@ -53,7 +53,7 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], rev
                         is_success, results = AtlasResultsRequest(**kwargs).create()
 
                         if is_success :
-                                results = list(results)
+                                # results = list(results)
                             # else:
                                 # Output file
                                 fi = gzip.open("%s/%s_msmId%s.json.gz" % (path, currDate, msmId) ,"wb")
