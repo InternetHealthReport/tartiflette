@@ -71,6 +71,7 @@ if __name__ == "__main__":
             # Shut down everything
             atlas_stream.disconnect()
 
+            print "Disconnection! will try to reconnect in 1 second..."
             time.sleep(1) 
 
         # This script should never end, send an email if it does
