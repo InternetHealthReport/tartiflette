@@ -104,7 +104,7 @@ def processInit():
     # # results = computeRtt2( (start, end) )
     # return results[0]
 
-def computeRtt( (af, start, end, skip, limit, prefixes) ):
+def computeRtt( (af, start, end, prefixes, streamLag) ):
     """Read traceroutes from a cursor. Used for multi-processing.
 
     Assume start and end are less than 24h apart
@@ -115,25 +115,32 @@ def computeRtt( (af, start, end, skip, limit, prefixes) ):
 
     nbRow = 0
     diffRtt = defaultdict(dict)
-    for col in collectionNames:
-        collection = db[col]
-        if prefixes is None:
-            cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end} } , 
-                projection={"result":1, "from":1} , 
-                skip = skip,
-                limit = limit,
-                # cursor_type=pymongo.cursor.CursorType.EXHAUST,
-                batch_size=int(10e6))
-        else:
-            cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}, "result.result.from": prefixes } , 
-                projection={"result":1, "from":1} , 
-                skip = skip,
-                limit = limit,
-                # cursor_type=pymongo.cursor.CursorType.EXHAUST,
-                batch_size=int(10e6))
-        for trace in cursor: 
-            readOneTraceroute(trace, diffRtt)
-            nbRow += 1
+    firstExec = True
+    while firstExec or datetime.utcnow() < e+timedelta(seconds=streamLag):
+        if streamLag and not firstExec:
+            time.sleep(10)
+
+        for col in collectionNames:
+            collection = db[col]
+            if prefixes is None:
+                cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end} } , 
+                    sort={"_id":1},
+                    projection={"result":1, "from":1} , 
+                    skip = nbRow,
+                    # cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                    batch_size=int(10e6))
+            else:
+                cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}, "result.result.from": prefixes } , 
+                    projection={"result":1, "from":1} , 
+                    sort={"_id":1},
+                    skip = nbRow,
+                    # cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                    batch_size=int(10e6))
+            for trace in cursor: 
+                readOneTraceroute(trace, diffRtt)
+                nbRow += 1
+
+        firstExec = False
 
     return diffRtt, nbRow
 
@@ -333,8 +340,9 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
                 "minASNEntropy": 0.5,
                 "minSeen": 3,
                 "experimentDate": datetime.now(),
-                "af": "6",
+                "af": "", #deprecated
                 "comment": "May to Dec 2015, IPv6",
+                "streamLag": 5*60 # 5 minute lag
                 "prefixes": None
                 }
 
@@ -379,11 +387,17 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
         if not totalRows:
             print "No data for that time bin!"
             continue
+
         params = []
-        limit = int(totalRows/(nbProcesses*binMult-1))
-        skip = range(0, totalRows, limit)
-        for i, val in enumerate(skip):
-            params.append( (expParam["af"], currDate, currDate+expParam["timeWindow"], val, limit, expParam["prefixes"]) )
+        binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], nbProcesses*binMult+1)
+        for i in range(nbProcesses*binMult):
+            params.append( (expParam["af"], binEdges[i], binEdges[i+1], expParam["prefixes"], expParam["streamLag"]) )
+
+        # params = []
+        # limit = int(totalRows/(nbProcesses*binMult-1))
+        # skip = range(0, totalRows, limit)
+        # for i, val in enumerate(skip):
+            # params.append( (expParam["af"], currDate, currDate+expParam["timeWindow"], val, limit, expParam["prefixes"]) )
 
         diffRtt = defaultdict(dict)
         nbRow = 0 

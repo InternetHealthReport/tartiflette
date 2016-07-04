@@ -75,7 +75,7 @@ def processInit():
     db = client.atlas
 
 
-def countRoutes( (af, start, end) ):
+def countRoutes( (af, start, end, streamLag) ):
     """Read traceroutes from a cursor. Used for multi-processing.
     """
 
@@ -86,15 +86,25 @@ def countRoutes( (af, start, end) ):
 
     nbRow = 0
     routes = defaultdict(routeCount)
-    for col in collectionNames:
-        collection = db[col]
-        cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
-                projection={"result":1, "prb_id":1, "dst_addr":1} , 
-                cursor_type=pymongo.cursor.CursorType.EXHAUST,
-                batch_size=int(10e6))
-        for trace in cursor: 
-            readOneTraceroute(trace, routes)
-            nbRow += 1
+    firstExec = True
+    while firstExec or datetime.utcnow() < e+timedelta(seconds=streamLag):
+        if streamLag and not firstExec:
+            time.sleep(10)
+
+        for col in collectionNames:
+            collection = db[col]
+            cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
+                    projection={"result":1, "prb_id":1, "dst_addr":1} , 
+                    sort={"_id":1},
+                    skip = nbRow,
+                    cursor_type=pymongo.cursor.CursorType.EXHAUST,
+                    batch_size=int(10e6))
+            for trace in cursor: 
+                readOneTraceroute(trace, routes)
+                nbRow += 1
+
+        firstExec = False
+
 
     return routes, nbRow
 
@@ -141,9 +151,10 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
                 "alpha": 0.01, # parameter for exponential smoothing 
                 "minCorr": -0.25, # correlation scores lower than this value will be reported
                 "minSeen": 3,
-                "af": "6",
+                "streamLag": 5*60 # 5 minute lag
+                "af": "", # deprecated
                 "experimentDate": datetime.now(),
-                "comment": "May to Dec. 2015, IPv6",
+                "comment": "",
                 }
 
         expId = detectionExperiments.insert_one(expParam).inserted_id 
@@ -152,7 +163,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     else:
         expParam = detectionExperiments.find_one({"_id": expId})
         expParam["start"] = expParam["end"]
-        expParam["end"] = datetime(2016, 1, 1, 0, 0)
+        expParam["end"] = expParam["end"]+timedelta(expParam["timeWindow"] 
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
             print "Problem happened when updating the experiment dates!"
@@ -176,7 +187,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         params = []
         binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], nbProcesses*binMult+1)
         for i in range(nbProcesses*binMult):
-            params.append( (expParam["af"], binEdges[i], binEdges[i+1]) )
+            params.append( (expParam["af"], binEdges[i], binEdges[i+1], expParam["streamLag"]) )
 
         nbRow = 0 
         routes =  pool.imap_unordered(countRoutes, params)
