@@ -103,7 +103,7 @@ if __name__ == "__main__":
             atlas_stream.socketIO.on("atlas_error", on_atlas_error)
             # Subscribe to new stream 
             atlas_stream.bind_channel(channel, on_result_response)
-            stream_parameters = {"type": "traceroute", "buffering":True, "equalsTo": {“af”: 4}}
+            stream_parameters = {"type": "traceroute", "buffering":True, "equalsTo":{"af": 4}}
             atlas_stream.start_stream(stream_type="result", **stream_parameters)
 
 
