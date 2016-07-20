@@ -13,6 +13,10 @@ lastTimestamp = 0
 currCollection = None
 
 def sendMail(message):
+    """
+    Send an email with the given message.
+    The destination/source addresses are defined in emailConf.
+    """
 
     msg = textwrap.dedent("""\
         From: %s 
@@ -29,7 +33,6 @@ def sendMail(message):
     server.quit()
 
 
-
 def on_result_response(*args):
     """
     Function called every time we receive a new traceroute.
@@ -42,6 +45,7 @@ def on_result_response(*args):
 
     trace = args[0]
     if lastTimestamp/(24*3600) != trace["timestamp"]/(24*3600) or currCollection is None:
+
         d = datetime.datetime.utcfromtimestamp(trace["timestamp"])
         print "getting data for %s" % d
         coll = "traceroute_%s_%02d_%02d" % (d.year, d.month, d.day)
@@ -52,6 +56,36 @@ def on_result_response(*args):
     currCollection.insert_one(trace)
 
 
+def on_error(*args):
+    print "got in on_error"
+    print args
+
+
+def on_connect(*args):
+    print "got in on_connect"
+    print args
+
+def on_reconnect(*args):
+    print "got in on_reconnect"
+    print args
+
+
+def on_disconnect(*args):
+    print "got in on_disconnect"
+    print args
+
+
+def on_connect_error(*args):
+    print "got in on_connect_error"
+    print args
+
+def on_atlas_error(*args):
+    print "got in on_atlas_error"
+    print args
+
+
+
+
 if __name__ == "__main__":
 
     try:
@@ -59,12 +93,19 @@ if __name__ == "__main__":
             atlas_stream = AtlasStream()
             atlas_stream.connect()
             # Measurement results
-            channel = "result"
+            channel = "atlas_result"
             # Bind function we want to run with every result message received
-            atlas_stream.bind_channel(channel, on_result_response)
+            atlas_stream.socketIO.on("connect", on_connect)
+            atlas_stream.socketIO.on("disconnect", on_disconnect)
+            atlas_stream.socketIO.on("reconnect", on_reconnect)
+            atlas_stream.socketIO.on("error", on_error)
+            atlas_stream.socketIO.on("connect_error", on_connect_error)
+            atlas_stream.socketIO.on("atlas_error", on_atlas_error)
             # Subscribe to new stream 
-            stream_parameters = {"type": "traceroute"}
+            atlas_stream.bind_channel(channel, on_result_response)
+            stream_parameters = {"type": "traceroute", "buffering":True, "equalsTo": {“af”: 4}}
             atlas_stream.start_stream(stream_type="result", **stream_parameters)
+
 
             # Run forever
             atlas_stream.timeout(seconds=None)
