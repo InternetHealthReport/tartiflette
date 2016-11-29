@@ -308,6 +308,85 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
         collection.insert_many(alarms)
 
 
+asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
+def asn_by_addr(ip, db=None):
+    try:
+        m = asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 
+        if m is None:
+            return ("0", "Unk")
+        else:
+            return m.groups() 
+    except socket.error:
+        return ("0", "Unk")
+
+def updateMagnitude(savedRef, timebin, df=None, tau=5, metric="devBound",
+        historySize=7*24, minPeriods=0, expId="stream"):
+
+    ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+
+    countAsn = defaultdict(int)
+    for k in savedRef.iterkeys():
+        countAsn[asn_by_addr(k[0],db=ga)]+=1
+        countAsn[asn_by_addr(k[1],db=ga)]+=1
+
+    ref = {}
+    ref["asn"] = pd.DataFrame(data={"asn": countAsn.keys(), "count": countAsn.values()})
+
+    # Retrieve alarms
+    db = tools.connect_mongo()
+    collection = db.rttChanges
+    starttime = timebin+datetime.timedelta(hours=historySize)
+    endtime =  timebin
+    cursor = collection.aggregate([
+        {"$match": {
+            "expId": expId, 
+            "timeBin": {"$gt": starttime, "$lt": timebin},
+            "diffMed": {"$gt": 1},
+            }}, 
+        {"$project": {
+            "ipPair":1,
+            "timeBin":1,
+            "diffMed":1,
+            "devBound": 1,
+            }},
+        {"$unwind": "$ipPair"},
+        ])
+
+    df =  pd.DataFrame(list(cursor))
+    df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+    df.set_index("timeBin")
+
+    if "asn" not in df.columns:
+        # find ASN for each ip
+        ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+        fct = functools.partial(asn_by_addr, db=ga)
+        sTmp = df["ipPair"].apply(fct).apply(pd.Series)
+        df["asn"] = sTmp[0]
+    
+    newValues = {}
+    for asn, asname in ref["asn"]["asn"].unique(): 
+
+        dfb = pd.DataFrame({u'devBound':0.0, u'timeBin':starttime, u'asn':asn,}, index=[starttime])
+        dfe = pd.DataFrame({u'devBound':0.0, u'timeBin':endtime, u'asn':asn}, index=[endtime])
+        dfasn = pd.concat([dfb, df[df["asn"] == asn], dfe])
+
+        grp = dfasn.groupby("timeBin")
+        grpSum = grp.sum().resample("1H")
+        grpCount = grp.count()
+
+        mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
+        grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
+        dftmp = pd.DataFrame(grpSum)
+        newValues[asn] = dftmp[endtime]
+
+
+    # Send new values to the frontend
+    # TODO:
+    #  -Connect to the sql database
+    #  -Update the list of asn
+    #  -Add new values
+
+
 def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
 
     nbProcesses = 12 
@@ -341,6 +420,30 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
         expId = detectionExperiments.insert_one(expParam).inserted_id 
         sampleMediandiff = {}
 
+    elif expId == "stream":
+        now = datetime.now(timezone("UTC"))  
+        expParam = {
+                "timeWindow": 60*60, # in seconds 
+                # "historySize": 24*7,  # 7 days
+                "start": datetime(now.year, now.month, now.hour-1, 0, 0, tzinfo=timezone("UTC")), 
+                "end": datetime(now.year, now.month, now.hour, 0, 0, tzinfo=timezone("UTC")), 
+                "alpha": 0.01, 
+                "confInterval": 0.05,
+                "minASN": 3,
+                "minASNEntropy": 0.5,
+                "minSeen": 3,
+                "experimentDate": datetime.now(),
+                "af": "",
+                "experimentDate": datetime.now(),
+                "comment": "Stream",
+                "prefixes": None
+                }
+
+        detectionExperiments.insert_one(expParam).inserted_id 
+        sys.stderr.write("Loading previous reference...")
+        fi = open("saved_references/%s_%s.pickle" % (expId, "diffRTT"), "rb")
+        sampleMediandiff = pickle.load(fi) 
+        sys.stderr.write("done!\n")
     else:
         expParam = detectionExperiments.find_one({"_id": expId})
         expParam["start"] = expParam["end"]
