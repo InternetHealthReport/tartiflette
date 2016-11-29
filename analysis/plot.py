@@ -43,6 +43,11 @@ def ecdf(a, **kwargs):
     yvals=np.arange(len(sorted))/float(len(sorted))
     plt.plot( sorted, yvals, **kwargs )
 
+def eccdf(a, **kwargs):
+    sorted=np.sort( a )
+    yvals=np.arange(len(sorted))/float(len(sorted))
+    plt.plot( sorted, 1-yvals, **kwargs )
+
 
 
 def prefixDiffRtt(res, prefix=None, minPts=20):
@@ -128,20 +133,20 @@ def rttEvolution(res, ips, suffix):
     if len(median)<2:
         return 0
 
-    fig = plt.figure(figsize=(15,3))
+    fig = plt.figure(figsize=(10,3))
     boundref = plt.fill_between(dates, smoothLow, smoothHi, color="#3333cc", facecolor="#DDDDFF", label="Normal Reference")
     # Workarround to have the fill_between in the legend
     boundref = plt.Rectangle((0, 0), 1, 1, fc="#DDDDFF", color="#3333cc")
     medianref, = plt.plot(dates, smoothAvg, '-', color="#AAAAFF")
     # plt.plot(dates, smoothHi, 'k--')
     # plt.plot(dates, smoothLow, 'k--')
-    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=7, color="black", ecolor='0.33', label="Diff. RTT")
+    data = plt.errorbar(dates, median, [ciLow, ciHigh], fmt=".", ms=7, color="black", ecolor='0.33',  elinewidth=1, label="Diff. RTT")
     ano, = plt.plot(alarmsDates, alarmsValues, "r*", ms=10, label="Anomaly")
     plt.grid(True, color="0.75")
-    if ips[0] in ipNames and ips[1] in ipNames:
-        plt.title("%s (%s) - %s (%s)" % (ips[0],ipNames[ips[0]],ips[1],ipNames[ips[1]]))
-    else:
-        plt.title("%s - %s" % ips)
+    # if ips[0] in ipNames and ips[1] in ipNames:
+        # plt.title("%s (%s) - %s (%s)" % (ips[0],ipNames[ips[0]],ips[1],ipNames[ips[1]]))
+    # else:
+        # plt.title("%s - %s" % ips)
     fig.autofmt_xdate()
     if len(alarmsValues):
         plt.legend([data, (boundref, medianref), ano],["Median Diff. RTT", "Normal Reference", "Detected Anomalies"], loc="best")
@@ -185,8 +190,9 @@ def rttEvolution(res, ips, suffix):
     plt.savefig("fig/diffRtt/%s_%s_distributionSamples.eps" % (ips[0].replace(".","_"), ips[1].replace(".","_")))
     plt.close()
 
-    fig = plt.figure(figsize=(10,4))
-    plt.plot(rttDiff[1], rttDiff[0],"x")
+    # fig = plt.figure(figsize=(10,4))
+    fig = plt.figure(figsize=(10,2.5))
+    plt.plot(rttDiff[1], rttDiff[0],"x",label="Raw values")
     plt.grid(True)
     # plt.yscale("log")
     dat = np.array(rttDiff[0])
@@ -195,8 +201,17 @@ def rttEvolution(res, ips, suffix):
     o = np.sum((dat>m+3*s) | (dat<m-3*s))
     operc = o/float(len(dat))
 
-    plt.title("%s - %s (mean=%.02f, std=%.02f, outliers=%s %.02f%%)" % (ips[0], ips[1], m, s, o, operc))
+    # plt.title("%s - %s (mean=%.02f, std=%.02f, outliers=%s %.02f%%)" % (ips[0], ips[1], m, s, o, operc))
+    plt.ylabel("Differential RTT (ms)") 
+    if ips[0] in ipNames and ips[1] in ipNames:
+        plt.title("%s (%s) - %s (%s)" % (ips[0],ipNames[ips[0]],ips[1],ipNames[ips[1]]))
+    else:
+        plt.title("%s - %s" % ips)
+    plt.legend( loc="best")
+    plt.ylim([-400,400])
+    plt.xticks([])
     fig.autofmt_xdate() 
+    fig.tight_layout()
     plt.savefig("fig/diffRtt/%s_%s_samples.eps" % (ips[0].replace(".","_"), ips[1].replace(".","_")))
     plt.close()
 
@@ -867,8 +882,10 @@ def tfidf(df, events, metric, historySize, threshold, ax=None, group=None):
 
 
 def routeEventCharacterization(df=None, plotAsnData=False, metric="resp", 
-        tau=5, tfidf_minScore=0.5, historySize=7*24, pltTitle="", exportCsv=False):
+        tau=5, tfidf_minScore=0.5, historySize=7*24, pltTitle="", exportCsv=False,
+        minPeriods=3, asnList = []):
 
+    expId = "583bb58ab0ab0284c6969c5d"
     if df is None:
         print "Retrieving Alarms"
         db = tools.connect_mongo()
@@ -878,9 +895,9 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
 
         cursor = collection.find( {
                 # "expId": exp["_id"], 
-                "expId": objectid.ObjectId("56d9b1eab0ab021d00224ca8"),  # ipv4
+                "expId": objectid.ObjectId(expId),  # ipv4
                 "corr": {"$lt": -0.2},
-                # "timeBin": {"$gt": datetime.datetime(2015,5,1, 0, 0, tzinfo=timezone("UTC")), "$lt": datetime.datetime(2015,6,1, 0, 0, tzinfo=timezone("UTC"))},
+                "timeBin": {"$gt": datetime.datetime(2016,11,22, 0, 0, tzinfo=timezone("UTC")), "$lt": datetime.datetime(2016,11,23, 0, 0, tzinfo=timezone("UTC"))},
                 # "timeBin": {"$gt": datetime.datetime(2015,11,1, 0, 0, tzinfo=timezone("UTC"))},
                 "nbPeers": {"$gt": 2},
                 # "nbSamples": {"$gt": 10},
@@ -992,11 +1009,11 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
         groupAsn.ix[groupAsn["resp"]<0, "asnLabel"] = "-"
         groupAsn[secondAgg] = groupAsn["asnLabel"]+groupAsn["asnL"]
         dfGrpAsn = pd.DataFrame(groupAsn)
-        group = dfGrpAsn.groupby(level="timeBin").sum()
+        group = dfGrpAsn.groupby(level="timeBin").sum().resample("1H")
         ## Normalization 
-        mad = lambda x: np.median(np.fabs(x -np.median(x)))
+        mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
         metricAbs = group[metric]
-        group["metric"] = (metricAbs-pd.rolling_median(metricAbs,historySize))/(1.4826*pd.rolling_apply(metricAbs,historySize,mad))
+        group["metric"] = (metricAbs-pd.rolling_median(metricAbs,historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(metricAbs,historySize,mad,min_periods=minPeriods))
         events = group[group["metric"].abs()> tau]
 
         fig = plt.figure(figsize=(9,3))
@@ -1029,130 +1046,140 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
     if plotAsnData or exportCsv:
         totalEvents = [] 
         for asn in dfGrpAsn["asnL"].unique():
-            print asn
-            fig = plt.figure(figsize=(10,4))
-            dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2015,4,30,23), u'asn':asn,}, index=[datetime.datetime(2015,4,30,23)])
-            dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2016,1,1,0), u'asn':asn}, index=[datetime.datetime(2016,1,1,0)])
-            dfasn = pd.concat([dfb, dfGrpAsn[dfGrpAsn["asnL"] == asn], dfe])
-            grp = dfasn.groupby("timeBin")
-            grpSum = grp.sum().resample("1H")
-            grpCount = grp.count()
+            if asn!= "Pkt.Loss" and (len(asnList) == 0 or int(asn) in asnList):
+                print asn
+                fig = plt.figure(figsize=(10,4))
+                # dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2015,4,30,23), u'asn':asn,}, index=[datetime.datetime(2015,4,30,23)])
+                # dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2016,1,1,0), u'asn':asn}, index=[datetime.datetime(2016,1,1,0)])
+                dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2016,11,14,23), u'asn':asn,}, index=[datetime.datetime(2015,11,14,23)])
+                dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2016,11,26,0), u'asn':asn}, index=[datetime.datetime(2016,11,26,0)])
+                dfasn = pd.concat([dfb, dfGrpAsn[dfGrpAsn["asnL"] == asn], dfe])
+                grp = dfasn.groupby("timeBin")
+                grpSum = grp.sum().resample("1H")
+                grpCount = grp.count()
 
-            
-            mad= lambda x: np.median(np.fabs(x -np.median(x)))
-            grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad))
-            events = grpSum[grpSum["metric"]> tau]
-            totalEvents.append(len(events))
-            if len(events):
-                reportedAsn += 1
+                
+                mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
+                grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
+                events = grpSum[grpSum["metric"]> tau]
+                totalEvents.append(len(events))
+                if len(events):
+                    reportedAsn += 1
 
-            if exportCsv:
-                # asnFile.write('%s,"%s"\n' % (asn, asname))
-                dftmp = pd.DataFrame(grpSum)
-                dftmp["asn"] = asn
-                dftmp["timeBin"] = dftmp.index
-                dftmp["label"] = "none" #TODO add tfidf results
-                dftmp.to_csv(forwardingFile, columns=["metric","resp", "label", "timeBin" ,"asn"],
-                        header=False, index=False, date_format="%Y-%m-%d %H:%M:%S+00", na_rep="0")
+                if exportCsv:
+                    # asnFile.write('%s,"%s"\n' % (asn, asname))
+                    dftmp = pd.DataFrame(grpSum)
+                    dftmp["asn"] = asn
+                    dftmp["timeBin"] = dftmp.index
+                    dftmp["label"] = "none" #TODO add tfidf results
+                    dftmp.to_csv(forwardingFile, columns=["metric","resp", "label", "timeBin" ,"asn"],
+                            header=False, index=False, date_format="%Y-%m-%d %H:%M:%S+00", na_rep="0")
 
-            if plotAsnData:
-                try:
-                    plt.plot(grpSum.index, grpSum["metric"])
-                    plt.grid(True)
-                    plt.title(asn)
-                    plt.ylabel("Magnitude "+metric)
-                    fig.autofmt_xdate()
-                    plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s.eps" % asn))
-                    plt.close()
-                except ValueError:
-                    pass
+                if plotAsnData:
+                    try:
+                        plt.plot(grpSum.index, grpSum["metric"])
+                        plt.grid(True)
+                        plt.title(asn)
+                        plt.ylabel("Magnitude "+metric)
+                        fig.autofmt_xdate()
+                        plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s.eps" % asn))
+                        plt.close()
+                    except ValueError:
+                        pass
 
-                # # Scatter plot magnitude vs. nb. ips
-                # fig = plt.figure()
-                # plt.plot(grpSum["metric"], grpCount["ip"], "*")
-                # plt.ylabel("# IPs")
-                # plt.xlabel("Magnitude")
-                # plt.grid(True)
-                # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_magnVSlink.eps" % asn))
-                # plt.close()
-
-                # Mean and Median
-                for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                    # Scatter plot magnitude vs. nb. links
-                    grpMean = grp.mean()
-                    grpMedian = grp.median()
-                    fig = plt.figure(figsize=(10,4))
-                    plt.plot(grpMean.index, grpMean[u], label="mean")
-                    plt.plot(grpMedian.index, grpMedian[u], label="median")
-                    plt.ylabel(u)
-                    if u == "devBound":
-                        plt.yscale("log")
-                    plt.grid(True)
-                    plt.title(asn)
-                    fig.autofmt_xdate()
-                    plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s.eps" % (asn, u)))
-                    plt.close()
-
-                # Sum
-                for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                    # Scatter plot magnitude vs. nb. links
-                    grpSum = grp.sum()
-                    fig = plt.figure(figsize=(10,4))
-                    plt.plot(grpSum.index, grpSum[u], label="sum")
-                    plt.ylabel(u)
-                    plt.yscale("log")
-                    plt.grid(True)
-                    plt.title(asn)
-                    fig.autofmt_xdate()
-                    plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_sum.eps" % (asn, u)))
-                    plt.close()
-                # # std. dev.
-                # for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                    # grpStd = grp.std()
-                    # fig = plt.figure(figsize=(10,4))
-                    # plt.plot(grpStd.index, grpStd[u])
-                    # plt.ylabel(u)
-                    # # plt.yscale("log")
+                    # # Scatter plot magnitude vs. nb. ips
+                    # fig = plt.figure()
+                    # plt.plot(grpSum["metric"], grpCount["ip"], "*")
+                    # plt.ylabel("# IPs")
+                    # plt.xlabel("Magnitude")
                     # plt.grid(True)
-                    # plt.title(asn)
-                    # # fig.autofmt_xdate()
-                    # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_std.eps" % (asn, u)))
+                    # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_magnVSlink.eps" % asn))
                     # plt.close()
 
-                # # Number ips
-                # for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                    # if u == "resp":
-                        # dfip = dfasn[dfasn[u]>0.9]
-                    # else:
-                        # dfip = dfasn[dfasn[u]>10]
-                    # grpCrazyIP = dfip.groupby(["timeBin"])
-                    # try:
-                        # grpCrazy = grpCrazyIP.count()
-                        # grpCount = grp.count()
+                    # Mean and Median
+                    for u in ["corrAbs", "pktDiffAbs", "resp"]:
+                        # Scatter plot magnitude vs. nb. links
+                        grpMean = grp.mean()
+                        grpMedian = grp.median()
+                        fig = plt.figure(figsize=(10,4))
+                        plt.plot(grpMean.index, grpMean[u], label="mean")
+                        plt.plot(grpMedian.index, grpMedian[u], label="median")
+                        plt.ylabel(u)
+                        if u == "devBound":
+                            plt.yscale("log")
+                        plt.grid(True)
+                        plt.title(asn)
+                        fig.autofmt_xdate()
+                        plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s.eps" % (asn, u)))
+                        plt.close()
+
+                    # Sum
+                    for u in ["corrAbs", "pktDiffAbs", "resp"]:
+                        try:
+                            # Scatter plot magnitude vs. nb. links
+                            grpSum = grp.sum()
+                            fig = plt.figure(figsize=(10,4))
+                            plt.plot(grpSum.index, grpSum[u], label="sum")
+                            plt.ylabel(u)
+                            plt.yscale("log")
+                            plt.grid(True)
+                            plt.title(asn)
+                            fig.autofmt_xdate()
+                            plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_sum.eps" % (asn, u)))
+                            plt.close()
+                        except:
+                            continue
+                    # # std. dev.
+                    # for u in ["corrAbs", "pktDiffAbs", "resp"]:
+                        # grpStd = grp.std()
                         # fig = plt.figure(figsize=(10,4))
-                        # plt.plot(grpCount.index, grpCount["ip"], label="total")
-                        # plt.plot(grpCrazy.index, grpCrazy["ip"], label="crazy")
-                        # plt.ylabel("# reported IPs")
+                        # plt.plot(grpStd.index, grpStd[u])
+                        # plt.ylabel(u)
                         # # plt.yscale("log")
                         # plt.grid(True)
                         # plt.title(asn)
-                        # fig.autofmt_xdate()
-                        # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_crazyIP.eps" % (asn, u)))
+                        # # fig.autofmt_xdate()
+                        # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_std.eps" % (asn, u)))
                         # plt.close()
-                    # except ValueError:
-                        # pass
+
+                    # # Number ips
+                    # for u in ["corrAbs", "pktDiffAbs", "resp"]:
+                        # if u == "resp":
+                            # dfip = dfasn[dfasn[u]>0.9]
+                        # else:
+                            # dfip = dfasn[dfasn[u]>10]
+                        # grpCrazyIP = dfip.groupby(["timeBin"])
+                        # try:
+                            # grpCrazy = grpCrazyIP.count()
+                            # grpCount = grp.count()
+                            # fig = plt.figure(figsize=(10,4))
+                            # plt.plot(grpCount.index, grpCount["ip"], label="total")
+                            # plt.plot(grpCrazy.index, grpCrazy["ip"], label="crazy")
+                            # plt.ylabel("# reported IPs")
+                            # # plt.yscale("log")
+                            # plt.grid(True)
+                            # plt.title(asn)
+                            # fig.autofmt_xdate()
+                            # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_crazyIP.eps" % (asn, u)))
+                            # plt.close()
+                        # except ValueError:
+                            # pass
                 
     return df
 
 
 
 def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_minScore=0.7,
-        metric="devBound", unit = "devBound", historySize=7*24, exportCsv=False, pltTitle="", showDetection=True):
+        metric="devBound", unit = "devBound", historySize=7*24, exportCsv=False, pltTitle="",
+        showDetection=True, minPeriods=1):
+
+    expId = "583aca23b0ab020545bc2234" # Extra Emile 8.8.8.8
+        # exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} # IPv4 
+        # exp = {"_id": objectid.ObjectId("56fe4405b0ab02f369ca8d2a")} # IPv6 
     
     if ref is None:
         db = tools.connect_mongo()
-        exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} # IPv4 
-        # exp = {"_id": objectid.ObjectId("56fe4405b0ab02f369ca8d2a")} # IPv6 
+        exp = {"_id": objectid.ObjectId(expId)} 
         #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
@@ -1174,7 +1201,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
 
         ref = {}
         ref["asn"] = pd.DataFrame(data={"asn": countAsn.keys(), "count": countAsn.values()})
-        return ref
+        # return ref
         ref["country"] = pd.DataFrame(data={"country": countCountry.keys(), "count": countCountry.values()})
     
     if df is None:
@@ -1183,7 +1210,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         collection = db.rttChanges
 
         # exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
-        exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
+        exp = {"_id": objectid.ObjectId(expId)} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         print "Looking at experiment: %s" % exp["_id"]
 
         cursor = collection.aggregate([
@@ -1191,7 +1218,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
                 # "expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 #"expId": objectid.ObjectId("5693c2e0f789373763a0bdf7"), 
                 "expId": exp["_id"], 
-                # "timeBin": {"$gt": datetime.datetime(2015,6,1, 0, 0, tzinfo=timezone("UTC")), "$lt": datetime.datetime(2015,7,1, 0, 0, tzinfo=timezone("UTC"))},
+                "timeBin": {"$gt": datetime.datetime(2016,11,15, 0, 0, tzinfo=timezone("UTC"))}, #, "$lt": datetime.datetime(2015,7,1, 0, 0, tzinfo=timezone("UTC"))},
                 "diffMed": {"$gt": 1},
                 # "nbProbeASN": {"$gt": 2},
                 # "asnEntropy": {"$gt": 0.5},
@@ -1271,8 +1298,8 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
     ## Normalization 
     # count = df.groupby("timeBin").count()
     # group["metric"] = group[metric]/count["ipPair"]
-    mad= lambda x: np.median(np.fabs(x -np.median(x)))
-    group["metric"] = (group[metric]-pd.rolling_median(group[metric],historySize))/(1.4826*pd.rolling_apply(group[metric],historySize,mad))
+    mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
+    group["metric"] = (group[metric]-pd.rolling_median(group[metric],historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(group[metric],historySize,mad,min_periods=minPeriods))
     # group["metric"] = (group[metric]-pd.rolling_mean(group[metric],historySize))/(pd.rolling_std(group[metric],historySize))
     events = group[group["metric"]> tau]
 
@@ -1305,23 +1332,25 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         reportedAsn = 0
         for asn, asname in ref["asn"]["asn"].unique(): #df["asn_name"].unique():
 
-            dfb = pd.DataFrame({u'devBound':0.0, u'label':"", u'timeBin':datetime.datetime(2015,4,30,23), u'asn':asn,}, index=[datetime.datetime(2015,4,30,23)])
-            dfe = pd.DataFrame({u'devBound':0.0, u'label':"", u'timeBin':datetime.datetime(2016,1,1,0), u'asn':asn}, index=[datetime.datetime(2016,1,1,0)])
+            dfb = pd.DataFrame({u'devBound':0.0, u'label':"", u'timeBin':datetime.datetime(2016,11,14,23), u'asn':asn,}, index=[datetime.datetime(2016,11,14,23)])
+            dfe = pd.DataFrame({u'devBound':0.0, u'label':"", u'timeBin':datetime.datetime(2016,11,30,0), u'asn':asn}, index=[datetime.datetime(2016,11,30,0)])
             dfasn = pd.concat([dfb, df[df["asn"] == asn], dfe])
 
             grp = dfasn.groupby("timeBin")
-            grpSum = grp.sum().resample("1H").fillna(0)
+            grpSum = grp.sum().resample("1H")
             grpCount = grp.count()
 
 
             # grp["metric"] = grp[metric]
             # grpSum["metric"] = (grpSum[metric]-pd.rolling_mean(grpSum[metric],historySize))/(pd.rolling_std(grpSum[metric],historySize))
-            mad= lambda x: np.median(np.fabs(x -np.median(x)))
-            grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad))
+            mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
+            grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
             events = grpSum[grpSum["metric"]> tau]
             totalEvents.append(len(events))
             if len(events):
                 reportedAsn += 1
+            else:
+                continue
 
             if exportCsv:
                 asnFile.write('%s,"%s"\n' % (asn, asname))
@@ -1346,13 +1375,13 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
                     pass 
 
                 # Scatter plot magnitude vs. nb. ips
-                fig = plt.figure()
-                plt.plot(grpSum["metric"], grpCount["ipPair"], "*")
-                plt.ylabel("# IPs")
-                plt.xlabel("Magnitude")
-                plt.grid(True)
-                plt.savefig("fig/rttChange_asn/"+unit+"/"+tools.str2filename("%s_magnVSlink.eps" % asn))
-                plt.close()
+                # fig = plt.figure()
+                # plt.plot(grpSum["metric"], grpCount["ipPair"], "*")
+                # plt.ylabel("# IPs")
+                # plt.xlabel("Magnitude")
+                # plt.grid(True)
+                # plt.savefig("fig/rttChange_asn/"+unit+"/"+tools.str2filename("%s_magnVSlink.eps" % asn))
+                # plt.close()
 
                 # Mean and Median
                 for u in ["devBound", "diffAbs"]:
@@ -1824,3 +1853,36 @@ def exportAlarmsCsv(rtt="./results/csv/rttAlarms.csv", route="./results/csv/rout
             "devBound","diffMed","ref","median","label"],
             header=False, index=False, date_format="%Y-%m-%d %H:%M:%S+00", na_rep="0")
         fi.close()
+
+
+def magnitudeDistribution(congestion, forwarding):
+
+    if congestion is None:
+        congestion = pd.read_csv("results/csv/congestion.csv", header=None, names=["mag", "devBound", "label", "time", "asn"])
+
+    if forwarding is None:
+        forwarding = pd.read_csv("results/csv/forwarding.csv", header=None, names=["mag", "devBound", "label", "time", "asn"]) 
+
+    # Plot the CDF for congestions
+    plt.figure()
+    eccdf(congestion.mag, marker="o")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.xlabel("Magnitude (delay change)")
+    plt.xlim([1, 10e5])
+    plt.ylabel("CCDF")
+    plt.tight_layout()
+    plt.savefig("./fig/magnitude_congestion_cdf.eps")
+
+
+    # Plot the CDF for forwarding anomalies
+    plt.figure()
+    ecdf(forwarding.mag,marker="o")
+    plt.xlabel("Magnitude (forwarding anomaly)")
+    plt.ylabel("CDF")
+    plt.yscale("log")
+    plt.xlim([-50, 5])
+    plt.tight_layout()
+    plt.savefig("./fig/magnitude_forwarding_cdf.eps")
+
+
