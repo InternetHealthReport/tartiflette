@@ -157,8 +157,8 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Streaming mode: analyze the last time bin
         now = datetime.now(timezone("UTC"))  
         expParam = detectionExperiments.find_one({"_id": expId})
-        expParam["start"]: datetime(now.year, now.month, now.hour-1, 0, 0, tzinfo=timezone("UTC")), 
-        expParam["end"]: datetime(now.year, now.month, now.hour, 0, 0, tzinfo=timezone("UTC")), 
+        expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) - timedelta(hours=1) 
+        expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
         expParam["analysisTimeUTC"] = now
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
@@ -179,7 +179,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     nbIteration = 0
 
     sys.stderr.write("Route analysis:\n")
-    for currDate in range(start,end,expParam["timeWindow"]):
+    for currDate in range(start,end,int(expParam["timeWindow"])):
         tsS = time.time()
 
         # count packet routes for the current time bin
@@ -572,8 +572,10 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
 
 
 if __name__ == "__main__":
-    # testDateRangeMongo(None,save_to_file=True)
     expId = None
     if len(sys.argv)>1:
-        expId = objectid.ObjectId(sys.argv[1]) 
+        if sys.argv[1] != "stream":
+            expId = objectid.ObjectId(sys.argv[1]) 
+        else:
+            expId = "stream"
     detectRouteChangesMongo(expId)

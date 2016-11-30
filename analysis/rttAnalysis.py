@@ -20,7 +20,6 @@ import pygeoip
 import socket
 import functools
 import pandas as pd
-import plot
 import random
 import re
 
@@ -429,8 +428,8 @@ def detectRttChangesMongo(expId=None):
         # streaming mode: analyze what happened in the last time bin
         now = datetime.now(timezone("UTC"))  
         expParam = detectionExperiments.find_one({"_id": expId})
-        expParam["start"]: datetime(now.year, now.month, now.hour-1, 0, 0, tzinfo=timezone("UTC")), 
-        expParam["end"]: datetime(now.year, now.month, now.hour, 0, 0, tzinfo=timezone("UTC")), 
+        expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
+        expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
         expParam["analysisTimeUTC"] = now
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
@@ -456,7 +455,7 @@ def detectRttChangesMongo(expId=None):
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
 
-    for currDate in range(start,end,expParam["timeWindow"]):
+    for currDate in range(start,end,int(expParam["timeWindow"])):
         sys.stderr.write("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
         tsS = time.time()
 
@@ -500,8 +499,11 @@ def detectRttChangesMongo(expId=None):
 
 
 if __name__ == "__main__":
-    # testDateRangeMongo(None,save_to_file=True)
+    expId = None
     if len(sys.argv)>1:
-        expId = objectid.ObjectId(sys.argv[1]) 
+	if sys.argv[1] != "stream":
+            expId = objectid.ObjectId(sys.argv[1]) 
+	else:
+            expId = "stream"
     detectRttChangesMongo(expId)
 
