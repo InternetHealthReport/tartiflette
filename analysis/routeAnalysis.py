@@ -133,6 +133,10 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     db = client.atlas
     detectionExperiments = db.routeExperiments
 
+    if expId == "stream":
+        expParam = detectionExperiments.find_one({"stream": True})
+        expId = expParam["_id"]
+
     if expId is None:
         expParam = {
                 "timeWindow": 60*60, # in seconds 
@@ -149,29 +153,13 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         expId = detectionExperiments.insert_one(expParam).inserted_id 
         refRoutes = defaultdict(routeCount)
 
-    elif expId == "stream":
-        now = datetime.now(timezone("UTC"))  
-        expParam = {
-                "timeWindow": 60*60, # in seconds 
-                "start": datetime(now.year, now.month, now.hour-1, 0, 0, tzinfo=timezone("UTC")), 
-                "end": datetime(now.year, now.month, now.hour, 0, 0, tzinfo=timezone("UTC")), 
-                "alpha": 0.01, # parameter for exponential smoothing 
-                "minCorr": -0.25, # correlation scores lower than this value will be reported
-                "minSeen": 3,
-                "af": "",
-                "experimentDate": datetime.now(),
-                "comment": "Stream",
-                }
-
-        detectionExperiments.insert_one(expParam).inserted_id 
-        sys.stderr.write("Loading previous reference...")
-        fi = open("saved_references/%s_%s.pickle" % (expId, "routeChange"), "rb")
-        refRoutes = pickle.load(fi) 
-        sys.stderr.write("done!\n")
     else:
+        # Streaming mode: analyze the last time bin
+        now = datetime.now(timezone("UTC"))  
         expParam = detectionExperiments.find_one({"_id": expId})
-        expParam["start"] = expParam["end"]
-        expParam["end"] = datetime(2016, 1, 1, 0, 0)
+        expParam["start"]: datetime(now.year, now.month, now.hour-1, 0, 0, tzinfo=timezone("UTC")), 
+        expParam["end"]: datetime(now.year, now.month, now.hour, 0, 0, tzinfo=timezone("UTC")), 
+        expParam["analysisTimeUTC"] = now
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
             print "Problem happened when updating the experiment dates!"
@@ -179,8 +167,11 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             return
 
         sys.stderr.write("Loading previous reference...")
-        fi = open("saved_references/%s_%s.pickle" % (expId, "routeChange"), "rb")
-        refRoutes = pickle.load(fi) 
+        try:
+            fi = open("saved_references/%s_%s.pickle" % (expId, "routeChange"), "rb")
+            refRoutes = pickle.load(fi) 
+        except IOError:
+            refRoutes = defaultdict(routeCount)
         sys.stderr.write("done!\n")
 
     start = int(calendar.timegm(expParam["start"].timetuple()))

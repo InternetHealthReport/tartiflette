@@ -387,7 +387,7 @@ def updateMagnitude(savedRef, timebin, df=None, tau=5, metric="devBound",
     #  -Add new values
 
 
-def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
+def detectRttChangesMongo(expId=None):
 
     nbProcesses = 12 
     binMult = 3 # number of bins = binMult*nbProcesses 
@@ -397,6 +397,11 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
     db = client.atlas
     detectionExperiments = db.rttExperiments
     alarmsCollection = db.rttChanges
+
+    if expId == "stream":
+        expParam = detectionExperiments.find_one({"stream": True})
+        expId = expParam["_id"]
+
 
     if expId is None:
         expParam = {
@@ -420,34 +425,13 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
         expId = detectionExperiments.insert_one(expParam).inserted_id 
         sampleMediandiff = {}
 
-    elif expId == "stream":
-        now = datetime.now(timezone("UTC"))  
-        expParam = {
-                "timeWindow": 60*60, # in seconds 
-                # "historySize": 24*7,  # 7 days
-                "start": datetime(now.year, now.month, now.hour-1, 0, 0, tzinfo=timezone("UTC")), 
-                "end": datetime(now.year, now.month, now.hour, 0, 0, tzinfo=timezone("UTC")), 
-                "alpha": 0.01, 
-                "confInterval": 0.05,
-                "minASN": 3,
-                "minASNEntropy": 0.5,
-                "minSeen": 3,
-                "experimentDate": datetime.now(),
-                "af": "",
-                "experimentDate": datetime.now(),
-                "comment": "Stream",
-                "prefixes": None
-                }
-
-        detectionExperiments.insert_one(expParam).inserted_id 
-        sys.stderr.write("Loading previous reference...")
-        fi = open("saved_references/%s_%s.pickle" % (expId, "diffRTT"), "rb")
-        sampleMediandiff = pickle.load(fi) 
-        sys.stderr.write("done!\n")
     else:
+        # streaming mode: analyze what happened in the last time bin
+        now = datetime.now(timezone("UTC"))  
         expParam = detectionExperiments.find_one({"_id": expId})
-        expParam["start"] = expParam["end"]
-        expParam["end"] = datetime(2016, 1, 1, 0, 0)
+        expParam["start"]: datetime(now.year, now.month, now.hour-1, 0, 0, tzinfo=timezone("UTC")), 
+        expParam["end"]: datetime(now.year, now.month, now.hour, 0, 0, tzinfo=timezone("UTC")), 
+        expParam["analysisTimeUTC"] = now
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
             print "Problem happened when updating the experiment dates!"
@@ -455,8 +439,12 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
             return
 
         sys.stderr.write("Loading previous reference...")
-        fi = open("saved_references/%s_%s.pickle" % (expId, "diffRTT"), "rb")
-        sampleMediandiff = pickle.load(fi) 
+        try:
+            fi = open("saved_references/%s_%s.pickle" % (expId, "diffRTT"), "rb")
+            sampleMediandiff = pickle.load(fi) 
+        except IOError:
+            sampleMediandiff = {}
+
         sys.stderr.write("done!\n")
 
     if not expParam["prefixes"] is None:
@@ -513,7 +501,6 @@ def detectRttChangesMongo(expId=None, configFile="detection.cfg"):
 
 if __name__ == "__main__":
     # testDateRangeMongo(None,save_to_file=True)
-    expId = None
     if len(sys.argv)>1:
         expId = objectid.ObjectId(sys.argv[1]) 
     detectRttChangesMongo(expId)
