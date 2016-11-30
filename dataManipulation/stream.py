@@ -8,25 +8,6 @@ import time
 import datetime 
 import sys
 
-if len(sys.argv) < 2:
-    print "usage: %s id0 [ id1 [id2 [...]]]" % sys.argv[0]
-
-#Start time of this script, we'll try to get it working for 1 hour
-starttime = datetime.datetime.now()
-
-client = pymongo.MongoClient("mongodb-iijlab")
-db = client.atlas
-
-nbTraces = 0
-lastTimestamp = 0
-currCollection = None
-lastDownload = None
-lastConnection = None
-
-allmsm = []
-for msmId in sys.argv[1:]:
-    allmsm.append(int(msmId)
-
 class ConnectionError(Exception):
     def __init__(self, value):
         self.value = value
@@ -79,7 +60,7 @@ def on_result_response(*args):
     currCollection.insert_one(trace)
 
     nbTraces += 1
-    print "\r %s traceroutes received" % nbTraces
+    # print "\r %s traceroutes received" % nbTraces
 
 
 def on_error(*args):
@@ -131,8 +112,28 @@ def on_atlas_unsubscribe(*args):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print "usage: %s id0 [ id1 [id2 [...]]]" % sys.argv[0]
+        sys.exit()
 
-    while (datetime.datetime.now()-starttime).second < 3600:
+    #Start time of this script, we'll try to get it working for 1 hour
+    starttime = datetime.datetime.now()
+
+    client = pymongo.MongoClient("mongodb-iijlab")
+    db = client.atlas
+
+    nbTraces = 0
+    lastTimestamp = 0
+    currCollection = None
+    lastDownload = None
+    lastConnection = None
+
+    allmsm = []
+    for msmId in sys.argv[1:]:
+        allmsm.append(int(msmId))
+
+
+    while (datetime.datetime.now()-starttime).seconds < 3600:
         try:
             lastConnection = datetime.datetime.now()
             atlas_stream = AtlasStream()
@@ -155,8 +156,9 @@ if __name__ == "__main__":
                 stream_parameters = {"type": "traceroute", "buffering":True, "equalsTo":{"af": 4},   "msm": msm}
                 atlas_stream.start_stream(stream_type="result", **stream_parameters)
 
-            # Run forever
-            atlas_stream.timeout(seconds=3600-(datetime.datetime.now()-starttime).second)
+            # Run for 1 hour
+            print "start stream for msm ids: %s" % allmsm
+            atlas_stream.timeout(seconds=3600-(datetime.datetime.now()-starttime).seconds)
             # Shut down everything
             atlas_stream.disconnect()
             break
@@ -173,9 +175,9 @@ if __name__ == "__main__":
                 time.sleep(60) 
             print "Go back to the loop and reconnect"
 
-    except Exception as e: 
-        save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
-        exception_fp = open("dump_%s.err" % datetime.datetime.now(), "w")
-        exception_fp.write(save_note) 
-        sendMail(save_note)
-        sys.exit()
+        except Exception as e: 
+            save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
+            exception_fp = open("dump_%s.err" % datetime.datetime.now(), "w")
+            exception_fp.write(save_note) 
+            sendMail(save_note)
+            sys.exit()
