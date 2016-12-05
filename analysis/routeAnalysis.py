@@ -291,6 +291,7 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
     
     data = {"timeBin":[],  "router":[], "ip": [], "pktDiff": [], "resp": [], "asn": []} 
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+    ip2asn = {}
 
     for i, row in enumerate(cursor):
         print "%dk \r" % (i/1000), 
@@ -301,7 +302,9 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
             sumPktDiff += np.abs(pkt - refDict[ip])
 
         for ip, pkt in obsList:
-            if ip == "0":
+            if ip == "0" or ip == "x":
+                    # data["asn"].append("Pkt.Loss")
+                    # # TODO how to handle packet loss on the website ?
                 continue
 
             pktDiff = pkt - refDict[ip] 
@@ -312,12 +315,14 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
             data["timeBin"].append(row["timeBin"])
             data["ip"].append(ip)
             data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
-            if ip == "x":
-                data["asn"].append("Pkt.Loss")
+            asn = ""
+            if ip in ip2asn:
+                asn = ip2asn[ip]
             else:
-                data["asn"].append(asn_by_addr(ip, db=gi)[0]) 
+                asn = asn_by_addr(ip, db=gi)
 
-            # TODO how to handle packet loss on the website ?
+            data["asn"].append(asn)
+
     
     df =  pd.DataFrame.from_dict(data)
     df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
