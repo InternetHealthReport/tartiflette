@@ -241,7 +241,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
  
         # push alarms to the webserver
         for alarm in lastAlarms:
-            ts = alarm["ts"]+timedelta(seconds=expParam["timeWindow"]/2)
+            ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
             cursor.execute("INSERT INTO ihr_forwarding_alarms (asn, timebin, ip,  \
                     correlation, nbsamples, refhops, obshops) VALUES (%s, %s, %s, \
                     %s, %s, %s, %s)", (int(ip2asn[ip][0]), ts, alarm["ip"], alarm["corr"],
