@@ -486,7 +486,7 @@ def detectRttChangesMongo(expId=None):
  
         # push alarms to the webserver
         for alarm in lastAlarms:
-            ts = alarm["ts"]+timedelta(seconds=expParam["timeWindow"]/2)
+            ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
                 cursor.execute("INSERT INTO ihr_congestion_alarms (asn, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
