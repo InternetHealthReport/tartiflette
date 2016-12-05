@@ -333,8 +333,8 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
 
     magnitudes = {}
     for asn in asnList:
-        dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':starttime, u'asn':asn,}, index=[starttime])
-        dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':endtime, u'asn':asn}, index=[endtime])
+        dfb = pd.DataFrame({u'resp':0.0, u'timeBin':starttime, u'asn':asn,}, index=[starttime])
+        dfe = pd.DataFrame({u'resp':0.0, u'timeBin':endtime, u'asn':asn}, index=[endtime])
         dfasn = pd.concat([dfb, dfGrpAsn[dfGrpAsn["asn"] == asn], dfe])
         grp = dfasn.groupby("timeBin")
         grpSum = grp.sum().resample("1H").sum()
