@@ -318,7 +318,7 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
             data["ip"].append(ip)
             data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
             if not ip in ip2asn:
-                ip2asn[ip] = asn_by_addr(ip, db=gi)
+                ip2asn[ip] = asn_by_addr(ip, db=gi)[0]
 
             data["asn"].append(ip2asn[ip])
 
