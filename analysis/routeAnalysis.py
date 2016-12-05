@@ -332,7 +332,7 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
     dfGrpAsn = pd.DataFrame(groupAsn)
 
     magnitudes = {}
-    for asn in asnList:
+    for asn, asname in asnList:
         dfb = pd.DataFrame({u'resp':0.0, u'timeBin':starttime, u'asn':asn,}, index=[starttime])
         dfe = pd.DataFrame({u'resp':0.0, u'timeBin':endtime, u'asn':asn}, index=[endtime])
         dfasn = pd.concat([dfb, dfGrpAsn[dfGrpAsn["asn"] == asn], dfe])
