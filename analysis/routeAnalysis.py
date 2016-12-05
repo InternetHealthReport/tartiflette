@@ -239,16 +239,21 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         cursor.execute("SELECT * FROM ihr_asn;")
         asnList = cursor.fetchall()   
  
+        ip2asn = {} 
+        gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
         # push alarms to the webserver
         for alarm in lastAlarms:
             ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
+            if not ip in ip2asn:
+                ip2asn[ip] = asn_by_addr(ip, db=gi)[0]
+
             cursor.execute("INSERT INTO ihr_forwarding_alarms (asn, timebin, ip,  \
                     correlation, nbsamples, refhops, obshops) VALUES (%s, %s, %s, \
-                    %s, %s, %s, %s)", (int(ip2asn[ip][0]), ts, alarm["ip"], alarm["corr"],
+                    %s, %s, %s, %s)", (int(ip2asn[ip]), ts, alarm["ip"], alarm["corr"],
                     alarm["nbSamples"], alarm["refNextHops"], alarm["obsNextHops"]))
 
         # compute magnitude
-        mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId)
+        mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId, ip2asn, alarmsCollection)
         for asn in asnList:
             cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude) \
             VALUES (%s, %s, %s)", (int(asn[0]), ts, mag[asn])) 
@@ -269,7 +274,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.join()
     
 
-def computeMagnitude(asnList, timeBin, expId, collection, metric="resp", 
+def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
     starttime = timeBin-timedelta(hours=historySize)
@@ -294,7 +299,6 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
     
     data = {"timeBin":[],  "router":[], "ip": [], "pktDiff": [], "resp": [], "asn": []} 
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
-    ip2asn = {}
 
     for i, row in enumerate(cursor):
         print "%dk \r" % (i/1000), 
