@@ -254,8 +254,8 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
 def computeMagnitude(asnList, timeBin, expId, collection, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
-    starttime = timebin-timedelta(hours=historySize)
-    endtime =  timebin
+    starttime = timeBin-timedelta(hours=historySize)
+    endtime =  timeBin
     cursor = collection.find( {
             "expId": expId,  
             "corr": {"$lt": corrThresh},
