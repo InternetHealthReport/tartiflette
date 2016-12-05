@@ -326,16 +326,12 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
     df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
     df.set_index("timeBin")
     
-    secondAgg = "asn"
-    groupAsn = df.groupby(["timeBin",secondAgg]).sum()
-    groupAsn["timeBin"] = groupAsn.index.get_level_values("timeBin")
-    dfGrpAsn = pd.DataFrame(groupAsn)
-
     magnitudes = {}
     for asn, asname in asnList:
         dfb = pd.DataFrame({u'resp':0.0, u'timeBin':starttime, u'asn':asn,}, index=[starttime])
         dfe = pd.DataFrame({u'resp':0.0, u'timeBin':endtime, u'asn':asn}, index=[endtime])
-        dfasn = pd.concat([dfb, dfGrpAsn[dfGrpAsn["asn"] == asn], dfe])
+        dfasn = pd.concat([dfb, df[df["asn"] == asn], dfe])
+
         grp = dfasn.groupby("timeBin")
         grpSum = grp.sum().resample("1H").sum()
         
