@@ -18,6 +18,7 @@ import tools
 import cPickle as pickle
 import pygeoip
 import re
+import pandas as pd
 
 from bson import objectid
 
@@ -265,6 +266,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
+
 def computeMagnitude(asnList, timeBin, expId, collection, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
@@ -275,6 +277,7 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
             "corr": {"$lt": corrThresh},
             "timeBin": {"$gt": starttime, "$lte": timeBin},
             "nbPeers": {"$gt": 2},
+            "nbSamples": {"$gt": 8},
         }, 
         [ 
             "obsNextHops",
@@ -286,7 +289,7 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
         ],
         )
     
-    data = {"timeBin":[], "corrAbs": [], "router":[], "label": [], "ip": [], "pktDiffAbs": [],
+    data = {"timeBin":[],  "router":[], "ip": [], 
             "pktDiff": [], "nbSamples": [],  "resp": [], "respAbs": [], "asn": []} # "nbPeers": [], "nbSeen": [],
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
@@ -303,23 +306,13 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
                 continue
 
             pktDiff = pkt - refDict[ip] 
-            if pktDiff < 0:
-                # link disapering
-                data["label"].append("-")
-            else:
-                # new link
-                data["label"].append("+")
 
-            pktDiffAbs = np.abs(pktDiff)
             corrAbs = np.abs(row["corr"])
-            data["pktDiffAbs"].append(pktDiffAbs)
             data["pktDiff"].append(pktDiff)
             data["router"].append(row["ip"])
             data["timeBin"].append(row["timeBin"])
-            data["corrAbs"].append(corrAbs)
             data["ip"].append(ip)
             data["nbSamples"].append(row["nbSamples"])
-            data["respAbs"].append(corrAbs * (pktDiffAbs/sumPktDiff) )
             data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
             if ip == "x":
                 data["asn"].append("Pkt.Loss")
@@ -332,20 +325,10 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
     df =  pd.DataFrame.from_dict(data)
     df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
     df.set_index("timeBin")
-
-    if "resp" not in df.columns:
-        g = pd.DataFrame(df.groupby(["timeBin", "router"]).sum())
-        df["resp"] = df["pktDiff"]/pd.merge(df, g,left_on=["timeBin","router"], 
-                right_index=True, suffixes=["","_grp"])["pktDiffAbs_grp"] 
-        df["resp"] = df["resp"]*df["corrAbs"]
     
     secondAgg = "asn"
     groupAsn = df.groupby(["timeBin",secondAgg]).sum()
-    groupAsn["asnL"] = groupAsn.index.get_level_values(secondAgg)
     groupAsn["timeBin"] = groupAsn.index.get_level_values("timeBin")
-    groupAsn["asnLabel"] = "+"
-    groupAsn.ix[groupAsn["resp"]<0, "asnLabel"] = "-"
-    groupAsn[secondAgg] = groupAsn["asnLabel"]+groupAsn["asnL"]
     dfGrpAsn = pd.DataFrame(groupAsn)
 
     magnitudes = {}
