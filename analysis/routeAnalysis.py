@@ -224,15 +224,15 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # push alarms to the webserver
         for alarm in lastAlarms:
             ts = alarm["ts"]+datetime.timedelta(seconds=expParam["timeWindow"]/2)
-            cursor.execute("INSERT INTO ihr_forwarding_alarms (asn, timebin, ip,  
-                    correlation, samples, refhops, obshops) VALUES (%s, %s, %s,
+            cursor.execute("INSERT INTO ihr_forwarding_alarms (asn, timebin, ip,  \
+                    correlation, samples, refhops, obshops) VALUES (%s, %s, %s, \
                     %s, %s, %s, %s)", (ip2asn[ip][0], ts, alarm["ip"], alarm["corr"],
-                    alarm["nbSamples"], alarm["refNextHops"], alarm["obsNextHops"])
+                    alarm["nbSamples"], alarm["refNextHops"], alarm["obsNextHops"]))
 
         # compute magnitude
         mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId)
         for asn in asnList:
-            cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude)
+            cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude) \
             VALUES (%s, %s, %s)", (asn[0], ts, mag[asn])) 
 
 

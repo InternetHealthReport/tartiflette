@@ -485,22 +485,22 @@ def detectRttChangesMongo(expId=None):
 	cursor = conn.cursor()
         asnList = set(ip2asn.values())
         for asn, asname in asnList:
-            cursor.execute("INSERT INTO ihr_asn (asn, name) SELECT %s, %s 
-                    WHERE NOT EXISTS ( SELECT asn FROM example_table WHERE asn= %s);", (asn, asname, asn))
+            cursor.execute("INSERT INTO ihr_asn (asn, name) SELECT %s, %s \
+                WHERE NOT EXISTS ( SELECT asn FROM example_table WHERE asn= %s);", (asn, asname, asn))
  
         # push alarms to the webserver
         for alarm in lastAlarms:
             ts = alarm["ts"]+datetime.timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
-                cursor.execute("INSERT INTO ihr_congestion_alarms (asn, timebin, ip, link, 
-                        medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s,
+                cursor.execute("INSERT INTO ihr_congestion_alarms (asn, timebin, ip, link, \
+                        medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
                         %s, %s, %s, %s)", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
-                        alarm["medianRtt"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"])
+                        alarm["medianRtt"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"]))
 
         # compute magnitude
         mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId, alarmsCollection )
         for asn in asnList:
-            cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude)
+            cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude) \
             VALUES (%s, %s, %s)", (asn[0], ts, mag[asn])) 
 
 
