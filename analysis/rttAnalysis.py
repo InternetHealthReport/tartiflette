@@ -364,7 +364,9 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
         grpCount = grp.count()
 
         mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
-        grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
+        top = grpSum[metric]-grpSum[metric].rolling(window=historySize,min_periods=minPeriods, center=False).median()
+        bottom = (1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
+        grpSum["metric"] = top/bottom
         dftmp = pd.DataFrame(grpSum)
         newValues[asn] = dftmp[endtime]
 
