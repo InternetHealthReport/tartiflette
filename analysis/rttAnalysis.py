@@ -335,7 +335,6 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
         {"$project": {
             "ipPair":1,
             "timeBin":1,
-            "diffMed":1,
             "devBound": 1,
             }},
         {"$unwind": "$ipPair"},
@@ -360,15 +359,12 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
         dfasn = pd.concat([dfb, df[df["asn"] == asn], dfe])
 
         grp = dfasn.groupby("timeBin")
-        grpSum = grp.sum().resample("1H")
-        grpCount = grp.count()
+        grpSum = grp.sum().resample("1H").sum()
 
         mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
-        top = grpSum[metric]-grpSum[metric].rolling(window=historySize,min_periods=minPeriods, center=False).median()
-        bottom = (1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
-        grpSum["metric"] = top/bottom
-        dftmp = pd.DataFrame(grpSum)
-        newValues[asn] = dftmp[endtime]
+        top = grpSum[metric][-1]-grpSum[metric].median()
+        bottom = (1+1.4826*mad(grpSum[metric]))
+        newValues[asn] = top/bottom
 
     return newValues
 
