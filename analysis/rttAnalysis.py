@@ -351,7 +351,7 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
         sTmp = df["ipPair"].apply(fct).apply(pd.Series)
         df["asn"] = sTmp[0]
     
-    newValues = {}
+    magnitudes = {}
     for asn, asname in asnList: 
 
         dfb = pd.DataFrame({u'devBound':0.0, u'timeBin':starttime, u'asn':asn,}, index=[starttime])
@@ -362,11 +362,9 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
         grpSum = grp.sum().resample("1H").sum()
 
         mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
-        top = grpSum[metric][-1]-grpSum[metric].median()
-        bottom = (1+1.4826*mad(grpSum[metric]))
-        newValues[asn] = top/bottom
+        magnitudes[asn] = (grpSum[metric][-1]-grpSum[metric].median()) / (1+1.4826*mad(grpSum[metric]))
 
-    return newValues
+    return magnitudes
 
 
 def detectRttChangesMongo(expId=None):

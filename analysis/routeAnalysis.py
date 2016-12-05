@@ -334,21 +334,18 @@ def computeMagnitude(asnList, timeBin, expId, metric="resp",
     groupAsn[secondAgg] = groupAsn["asnLabel"]+groupAsn["asnL"]
     dfGrpAsn = pd.DataFrame(groupAsn)
 
-    newValues = {}
+    magnitudes = {}
     for asn in asnList:
         dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':starttime, u'asn':asn,}, index=[starttime])
         dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':endtime, u'asn':asn}, index=[endtime])
         dfasn = pd.concat([dfb, dfGrpAsn[dfGrpAsn["asn"] == asn], dfe])
         grp = dfasn.groupby("timeBin")
-        grpSum = grp.sum().resample("1H")
-        grpCount = grp.count()
+        grpSum = grp.sum().resample("1H").sum()
         
         mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
-        grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
-        dftmp = pd.DataFrame(grpSum)
-        newValues[asn] = dftmp[endtime]
+        magnitudes[asn] = (grpSum[metric][-1]-grpSum[metric].median()) / (1+1.4826*mad(grpSum[metric]))
     
-    return newValues
+    return magnitudes
 
 def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
 
