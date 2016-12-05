@@ -290,7 +290,6 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
         ],
         cursor_type=pymongo.cursor.CursorType.EXHAUST,
         batch_size=int(10e6))
-        )
     
     data = {"timeBin":[],  "router":[], "ip": [], "pktDiff": [], "resp": [], "asn": []} 
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
