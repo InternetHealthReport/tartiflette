@@ -482,12 +482,15 @@ def detectRttChangesMongo(expId=None):
         asnList = set(ip2asn.values())
         for asn, asname in asnList:
             cursor.execute("INSERT INTO ihr_asn (number, name) SELECT %s, %s \
-                WHERE NOT EXISTS ( SELECT asn FROM ihr_asn WHERE asn= %s);", (int(asn), asname, asn))
+                WHERE NOT EXISTS ( SELECT number FROM ihr_asn WHERE number= %s);", (int(asn), asname, asn))
  
         # push alarms to the webserver
         for alarm in lastAlarms:
             ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
+                if not ip in ip2asn:
+                    ip2asn[ip] =asn_by_addr(ip,db=gi)
+                    
                 cursor.execute("INSERT INTO ihr_congestion_alarms (asn, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
                         %s, %s, %s, %s)", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
@@ -497,7 +500,7 @@ def detectRttChangesMongo(expId=None):
         mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId, alarmsCollection )
         for asn in asnList:
             cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude) \
-            VALUES (%s, %s, %s)", (asn[0], ts, mag[asn])) 
+            VALUES (%s, %s, %s)", (asn[0], expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn])) 
 
 
     for ref, label in [(sampleMediandiff, "diffRTT")]:

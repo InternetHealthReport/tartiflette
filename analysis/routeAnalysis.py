@@ -144,7 +144,6 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     nbProcesses = 12 
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
-    lastAlarms = []
 
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
@@ -221,7 +220,6 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Update the reference
         for target, newRef, alarms in mapResult:
             refRoutes[target] = newRef
-            lastAlarms.extend(alarms)
 
             
         if nbRow>0:
@@ -241,22 +239,20 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
  
         ip2asn = {} 
         gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
-        # push alarms to the webserver
-        for alarm in lastAlarms:
-            ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
-            if not ip in ip2asn:
-                ip2asn[ip] = asn_by_addr(ip, db=gi)[0]
-
-            cursor.execute("INSERT INTO ihr_forwarding_alarms (asn, timebin, ip,  \
-                    correlation, nbsamples, refhops, obshops) VALUES (%s, %s, %s, \
-                    %s, %s, %s, %s)", (int(ip2asn[ip]), ts, alarm["ip"], alarm["corr"],
-                    alarm["nbSamples"], alarm["refNextHops"], alarm["obsNextHops"]))
-
         # compute magnitude
-        mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId, ip2asn, alarmsCollection)
-        for asn in asnList:
+        mag, alarms = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId, ip2asn, alarmsCollection)
+        for asn, asname in asnList:
             cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude) \
-            VALUES (%s, %s, %s)", (int(asn[0]), ts, mag[asn])) 
+            VALUES (%s, %s, %s)", (int(asn), expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn])) 
+
+        # push alarms to the webserver
+        ts = expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2)
+        for alarm in alarms:
+            cursor.execute("INSERT INTO ihr_forwarding_alarms (asn, timebin, ip,  \
+                    correlation, responsibility, pktDiff, previousHop ) VALUES (%s, %s, %s, \
+                    %s, %s, %s)", (int(alarm["asn"]), ts, alarm["ip"], alarm["correlation"], alarm["responsibility"],
+                    alarm["pktDiff"], alarm["previousHop"]))
+
 
 
     for ref, label in [(sampleMediandiff, "diffRTT")]:
@@ -278,6 +274,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
     starttime = timeBin-timedelta(hours=historySize)
+    alarms = []
     endtime =  timeBin
     cursor = collection.find( {
             "expId": expId,  
@@ -321,11 +318,15 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
             data["router"].append(row["ip"])
             data["timeBin"].append(row["timeBin"])
             data["ip"].append(ip)
-            data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
+            resp = corrAbs * (pktDiff/sumPktDiff) 
+            data["resp"].append( resp )
             if not ip in ip2asn:
                 ip2asn[ip] = asn_by_addr(ip, db=gi)[0]
 
             data["asn"].append(ip2asn[ip])
+
+            if row["timeBin"] == timeBin and resp > 0.1:
+                alarms.append({"asn": data["asn"][-1][0], "ip": ip, "previousHop": row["ip"], "correlation": row["corr"], "responsibility": resp, "pktDiff": pktDiff})
 
     
     df =  pd.DataFrame.from_dict(data)
@@ -344,7 +345,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
         mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
         magnitudes[asn] = (grpSum[metric][-1]-grpSum[metric].median()) / (1+1.4826*mad(grpSum[metric]))
     
-    return magnitudes
+    return magnitudes, alarms
 
 def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
 
