@@ -21,6 +21,18 @@ import pygeoip
 from bson import objectid
 
 
+asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
+def asn_by_addr(ip, db=None):
+    try:
+        m = asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 
+        if m is None:
+            return ("0", "Unk")
+        else:
+            return m.groups() 
+    except socket.error:
+        return ("0", "Unk")
+
+
 # type needed for child processes
 def ddType():
     return defaultdict(float)
