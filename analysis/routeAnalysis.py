@@ -250,10 +250,9 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
-def computeMagnitude(asnList, timeBin, expId , metric="resp", 
+def computeMagnitude(asnList, timeBin, expId, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
-    db = tools.connect_mongo()
     collection = db.routeChanges
     starttime = timebin-datetime.timedelta(hours=historySize)
     endtime =  timebin

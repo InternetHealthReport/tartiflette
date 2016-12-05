@@ -320,12 +320,10 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
 
     return alarms
 
-def computeMagnitude(asnList, timebin, expId, tau=5, metric="devBound",
+def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBound",
         historySize=7*24, minPeriods=0):
 
     # Retrieve alarms
-    db = tools.connect_mongo()
-    collection = db.rttChanges
     starttime = timebin-datetime.timedelta(hours=historySize)
     endtime =  timebin
     cursor = collection.aggregate([
@@ -393,11 +391,8 @@ def detectRttChangesMongo(expId=None):
     if expId is None:
         expParam = {
                 "timeWindow": 60*60, # in seconds 
-                # "historySize": 24*7,  # 7 days
                 "start": datetime(2016, 11, 1, 0, 0, tzinfo=timezone("UTC")), 
-                # "end":   datetime(2016, 1, 1, 0, 0, tzinfo=timezone("UTC")),
                 "end":   datetime(2016, 11, 26, 0, 0, tzinfo=timezone("UTC")),
-                # "end":   datetime(2015, 6, 20, 0, 0, tzinfo=timezone("UTC")),
                 "alpha": 0.01, 
                 "confInterval": 0.05,
                 "minASN": 3,
@@ -503,7 +498,7 @@ def detectRttChangesMongo(expId=None):
                         alarm["medianRtt"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"])
 
         # compute magnitude
-        mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId)
+        mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId, alarmsCollection )
         for asn in asnList:
             cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude)
             VALUES (%s, %s, %s)", (asn[0], ts, mag[asn])) 
