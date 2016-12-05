@@ -20,6 +20,7 @@ import pygeoip
 import socket
 import re
 import pandas as pd
+import psycopg2
 
 from bson import objectid
 
@@ -213,7 +214,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, alarmsCollection) )
+            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target ) )
 
         mapResult = pool.map(routeChangeDetection, params)
 
@@ -341,8 +342,9 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
     
     return magnitudes
 
-def routeChangeDetection( (routes, routesRef, param, expId, ts, target, collection) ):
+def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
 
+    collection = db.routeChanges
     alpha = param["alpha"]
     alarms = []
 
