@@ -22,12 +22,26 @@ import functools
 import pandas as pd
 import random
 import re
+import psycopg2
+
 
 # import cProfile
 
 from bson import objectid
 
-#TODO try to speed up this function with numba?
+
+asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
+def asn_by_addr(ip, db=None):
+    try:
+        m = asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 
+        if m is None:
+            return ("0", "Unk")
+        else:
+            return m.groups() 
+    except socket.error:
+        return ("0", "Unk")
+
+
 def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
     """Read a single traceroute instance and compute the corresponding 
     differential RTTs.
@@ -193,13 +207,11 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
         asnProbeIdx = defaultdict(list)
 
         for idx, ip in enumerate(data["probe"]):
-            try:
-                if not ip in ip2asn:
-                    ip2asn[ip] = str(unicode(gi.asn_by_addr(ip)).partition(" ")[0])
-            except socket.error:
-                print "Unable to find the ASN for this address: "+ip
-                ip2asn[ip] = "Unk"
-            a = ip2asn[ip]
+            if not ip in ip2asn:
+                a = asn_by_addr(ip,db=gi)
+                ip2asn[ip] = a 
+            else:
+                a = ip2asn[ip]
             asn[a] += 1
             asnProbeIdx[a].append(idx)
                 
@@ -306,40 +318,20 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
     if len(alarms) and not collection is None:
         collection.insert_many(alarms)
 
+    return alarms
 
-asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
-def asn_by_addr(ip, db=None):
-    try:
-        m = asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 
-        if m is None:
-            return ("0", "Unk")
-        else:
-            return m.groups() 
-    except socket.error:
-        return ("0", "Unk")
-
-def updateMagnitude(savedRef, timebin, df=None, tau=5, metric="devBound",
-        historySize=7*24, minPeriods=0, expId="stream"):
-
-    ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
-
-    countAsn = defaultdict(int)
-    for k in savedRef.iterkeys():
-        countAsn[asn_by_addr(k[0],db=ga)]+=1
-        countAsn[asn_by_addr(k[1],db=ga)]+=1
-
-    ref = {}
-    ref["asn"] = pd.DataFrame(data={"asn": countAsn.keys(), "count": countAsn.values()})
+def computeMagnitude(asnList, timebin, expId, tau=5, metric="devBound",
+        historySize=7*24, minPeriods=0):
 
     # Retrieve alarms
     db = tools.connect_mongo()
     collection = db.rttChanges
-    starttime = timebin+datetime.timedelta(hours=historySize)
+    starttime = timebin-datetime.timedelta(hours=historySize)
     endtime =  timebin
     cursor = collection.aggregate([
         {"$match": {
             "expId": expId, 
-            "timeBin": {"$gt": starttime, "$lt": timebin},
+            "timeBin": {"$gt": starttime, "$lte": timebin},
             "diffMed": {"$gt": 1},
             }}, 
         {"$project": {
@@ -363,7 +355,7 @@ def updateMagnitude(savedRef, timebin, df=None, tau=5, metric="devBound",
         df["asn"] = sTmp[0]
     
     newValues = {}
-    for asn, asname in ref["asn"]["asn"].unique(): 
+    for asn, asname in asnList: 
 
         dfb = pd.DataFrame({u'devBound':0.0, u'timeBin':starttime, u'asn':asn,}, index=[starttime])
         dfe = pd.DataFrame({u'devBound':0.0, u'timeBin':endtime, u'asn':asn}, index=[endtime])
@@ -378,16 +370,12 @@ def updateMagnitude(savedRef, timebin, df=None, tau=5, metric="devBound",
         dftmp = pd.DataFrame(grpSum)
         newValues[asn] = dftmp[endtime]
 
-
-    # Send new values to the frontend
-    # TODO:
-    #  -Connect to the sql database
-    #  -Update the list of asn
-    #  -Add new values
+    return newValues
 
 
 def detectRttChangesMongo(expId=None):
 
+    streaming = False
     nbProcesses = 12 
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
@@ -426,6 +414,7 @@ def detectRttChangesMongo(expId=None):
 
     else:
         # streaming mode: analyze what happened in the last time bin
+        streaming = True
         now = datetime.now(timezone("UTC"))  
         expParam = detectionExperiments.find_one({"_id": expId})
         expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
@@ -450,6 +439,7 @@ def detectRttChangesMongo(expId=None):
         expParam["prefixes"] = re.compile(expParam["prefixes"])
 
     ip2asn = {}
+    lastAlarms = []
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
     start = int(calendar.timegm(expParam["start"].timetuple()))
@@ -481,8 +471,7 @@ def detectRttChangesMongo(expId=None):
         diffRtt, nbRow = mergeRttResults(rttResults, currDate, tsS, nbProcesses*binMult)
 
         # Detect oulier values
-        for dist, smoothMean in [ (diffRtt, sampleMediandiff)]:
-            outlierDetection(dist, smoothMean, expParam, expId, 
+        lastAlarms = outlierDetection(diffRtt, sampleMediandiff, expParam, expId, 
                     datetime.utcfromtimestamp(currDate), ip2asn, gi, alarmsCollection)
 
         timeSpent = (time.time()-tsS)
@@ -490,6 +479,35 @@ def detectRttChangesMongo(expId=None):
     
     pool.close()
     pool.join()
+
+    # Update results on the webserver
+    if streaming:
+        # update ASN table
+        conn_string = "host='romain.iijlab.net' dbname='ihr'"
+ 
+        # get a connection, if a connect cannot be made an exception will be raised here
+	conn = psycopg2.connect(conn_string)
+	cursor = conn.cursor()
+        asnList = set(ip2asn.values())
+        for asn, asname in asnList:
+            cursor.execute("INSERT INTO ihr_asn (asn, name) SELECT %s, %s 
+                    WHERE NOT EXISTS ( SELECT asn FROM example_table WHERE asn= %s);", (asn, asname, asn))
+ 
+        # push alarms to the webserver
+        for alarm in lastAlarms:
+            ts = alarm["ts"]+datetime.timedelta(seconds=expParam["timeWindow"]/2)
+            for ip in alarm["ipPair"]:
+                cursor.execute("INSERT INTO ihr_congestion_alarms (asn, timebin, ip, link, 
+                        medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s,
+                        %s, %s, %s, %s)", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
+                        alarm["medianRtt"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"])
+
+        # compute magnitude
+        mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId)
+        for asn in asnList:
+            cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude)
+            VALUES (%s, %s, %s)", (asn[0], ts, mag[asn])) 
+
 
     for ref, label in [(sampleMediandiff, "diffRTT")]:
         if not ref is None:

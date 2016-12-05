@@ -15,7 +15,6 @@ from scipy import stats
 import pymongo
 from multiprocessing import Process, Pool
 import tools
-# import pykov
 import cPickle as pickle
 
 from bson import objectid
@@ -124,10 +123,11 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
 def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO config file implementation
 
-
+    streaming = False
     nbProcesses = 12 
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
+    lastAlarms = []
 
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
@@ -155,6 +155,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
 
     else:
         # Streaming mode: analyze the last time bin
+        streaming = True
         now = datetime.now(timezone("UTC"))  
         expParam = detectionExperiments.find_one({"_id": expId})
         expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) - timedelta(hours=1) 
@@ -200,12 +201,46 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         mapResult = pool.map(routeChangeDetection, params)
 
         # Update the reference
-        for target, newRef in mapResult:
+        for target, newRef, alarms in mapResult:
             refRoutes[target] = newRef
+            lastAlarms.extend(alarms)
 
             
         if nbRow>0:
             nbIteration+=1
+
+
+    # Update results on the webserver
+    if streaming:
+        # update ASN table
+        conn_string = "host='romain.iijlab.net' dbname='ihr'"
+ 
+        # get a connection, if a connect cannot be made an exception will be raised here
+	conn = psycopg2.connect(conn_string)
+	cursor = conn.cursor()
+        cursor.execute("SELECT * FROM ihr_asn;")
+        asnList = cursor.fetchall()   
+ 
+        # push alarms to the webserver
+        for alarm in lastAlarms:
+            ts = alarm["ts"]+datetime.timedelta(seconds=expParam["timeWindow"]/2)
+            cursor.execute("INSERT INTO ihr_forwarding_alarms (asn, timebin, ip,  
+                    correlation, samples, refhops, obshops) VALUES (%s, %s, %s,
+                    %s, %s, %s, %s)", (ip2asn[ip][0], ts, alarm["ip"], alarm["corr"],
+                    alarm["nbSamples"], alarm["refNextHops"], alarm["obsNextHops"])
+
+        # compute magnitude
+        mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId)
+        for asn in asnList:
+            cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude)
+            VALUES (%s, %s, %s)", (asn[0], ts, mag[asn])) 
+
+
+    for ref, label in [(sampleMediandiff, "diffRTT")]:
+        if not ref is None:
+            print "Writing %s reference to file system." % (label)
+            fi = open("saved_references/%s_%s.pickle" % (expId, label), "w")
+            pickle.dump(ref, fi, 2) 
 
     print "Writing route change reference to file system." 
     fi = open("saved_references/%s_routeChange.pickle" % (expId), "w")
@@ -215,295 +250,106 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
-#TODO
-def updateMagnitude(df=None, plotAsnData=False, metric="resp", 
-        tau=5, tfidf_minScore=0.5, historySize=7*24, pltTitle="", exportCsv=False,
-        minPeriods=3, asnList = []):
+def computeMagnitude(asnList, timeBin, expId , metric="resp", 
+        tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
-    expId = "583bb58ab0ab0284c6969c5d"
-    if df is None:
-        print "Retrieving Alarms"
-        db = tools.connect_mongo()
-        collection = db.routeChanges
+    db = tools.connect_mongo()
+    collection = db.routeChanges
+    starttime = timebin-datetime.timedelta(hours=historySize)
+    endtime =  timebin
+    cursor = collection.find( {
+            "expId": expId,  
+            "corr": {"$lt": corrThresh},
+            "timeBin": {"$gt": starttime, "$lte": timeBin},
+            "nbPeers": {"$gt": 2},
+        }, 
+        [ 
+            "obsNextHops",
+            "refNextHops",
+            "timeBin",
+            "ip",
+            "nbSamples",
+            "corr",
+        ],
+        )
+    
+    data = {"timeBin":[], "corrAbs": [], "router":[], "label": [], "ip": [], "pktDiffAbs": [],
+            "pktDiff": [], "nbSamples": [],  "resp": [], "respAbs": [], "asn": []} # "nbPeers": [], "nbSeen": [],
+    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
-        exp = db.routeExperiments.find_one({}, sort=[("$natural", -1)] )
+    for i, row in enumerate(cursor):
+        print "%dk \r" % (i/1000), 
+        obsList = row["obsNextHops"] #eval("{"+row["obsNextHops"].partition("{")[2][:-1])
+        refDict = dict(row["refNextHops"]) #eval("{"+row["refNextHops"].partition("{")[2][:-1])
+        sumPktDiff = 0
+        for ip, pkt in obsList:
+            sumPktDiff += np.abs(pkt - refDict[ip])
 
-        cursor = collection.find( {
-                # "expId": exp["_id"], 
-                "expId": objectid.ObjectId(expId),  # ipv4
-                "corr": {"$lt": -0.2},
-                "timeBin": {"$gt": datetime.datetime(2016,11,22, 0, 0, tzinfo=timezone("UTC")), "$lt": datetime.datetime(2016,11,23, 0, 0, tzinfo=timezone("UTC"))},
-                # "timeBin": {"$gt": datetime.datetime(2015,11,1, 0, 0, tzinfo=timezone("UTC"))},
-                "nbPeers": {"$gt": 2},
-                # "nbSamples": {"$gt": 10},
-            }, 
-            [ 
-                "obsNextHops",
-                "refNextHops",
-                "timeBin",
-                "ip",
-                "nbSamples",
-                # "nbPeers",
-                # "nbSeen",
-                # "nbProbes":1,
-                # "diff":1,
-                "corr",
-            # ], limit=300000
-            ],
-            # limit=200000
-            )
-        
-        data = {"timeBin":[], "corrAbs": [], "router":[], "label": [], "ip": [], "pktDiffAbs": [],
-                "pktDiff": [], "nbSamples": [],  "resp": [], "respAbs": [], "asn": []} # "nbPeers": [], "nbSeen": [],
-        gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+        for ip, pkt in obsList:
+            if ip == "0":
+                continue
 
-        print "Compute stuff" # (%s rows)" % cursor.count() 
-        for i, row in enumerate(cursor):
-            print "%dk \r" % (i/1000), 
-            obsList = row["obsNextHops"] #eval("{"+row["obsNextHops"].partition("{")[2][:-1])
-            refDict = dict(row["refNextHops"]) #eval("{"+row["refNextHops"].partition("{")[2][:-1])
-            sumPktDiff = 0
-            for ip, pkt in obsList:
-                sumPktDiff += np.abs(pkt - refDict[ip])
+            pktDiff = pkt - refDict[ip] 
+            if pktDiff < 0:
+                # link disapering
+                data["label"].append("-")
+            else:
+                # new link
+                data["label"].append("+")
 
-            for ip, pkt in obsList:
-                if ip == "0":
-                    continue
+            pktDiffAbs = np.abs(pktDiff)
+            corrAbs = np.abs(row["corr"])
+            data["pktDiffAbs"].append(pktDiffAbs)
+            data["pktDiff"].append(pktDiff)
+            data["router"].append(row["ip"])
+            data["timeBin"].append(row["timeBin"])
+            data["corrAbs"].append(corrAbs)
+            data["ip"].append(ip)
+            data["nbSamples"].append(row["nbSamples"])
+            data["respAbs"].append(corrAbs * (pktDiffAbs/sumPktDiff) )
+            data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
+            if ip == "x":
+                data["asn"].append("Pkt.Loss")
+            else:
+                data["asn"].append(asn_by_addr(ip, db=gi)[0]) 
 
-                pktDiff = pkt - refDict[ip] 
-                if pktDiff < 0:
-                    # link disapering
-                    data["label"].append("-")
-                else:
-                    # new link
-                    data["label"].append("+")
-
-                pktDiffAbs = np.abs(pktDiff)
-                corrAbs = np.abs(row["corr"])
-                data["pktDiffAbs"].append(pktDiffAbs)
-                data["pktDiff"].append(pktDiff)
-                data["router"].append(row["ip"])
-                data["timeBin"].append(row["timeBin"])
-                data["corrAbs"].append(corrAbs)
-                data["ip"].append(ip)
-                data["nbSamples"].append(row["nbSamples"])
-                data["respAbs"].append(corrAbs * (pktDiffAbs/sumPktDiff) )
-                data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
-                if ip == "x":
-                    data["asn"].append("Pkt.Loss")
-                else:
-                    data["asn"].append(asn_by_addr(ip, db=gi)[0]) 
-                # data["nbSeen"].append(row["nbSeen"])
-                # data["nbPeers"].append(row["nbPeers"])
-        
-        print "\nRetrieve AS numbers"
-        df =  pd.DataFrame.from_dict(data)
-        df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
-        df.set_index("timeBin")
-
-        print "Release memory...",
-        del data
-        gc.collect()
-        print "done!"
-
-        # fct = functools.partial(asn_by_addr, db=gi, onlyNumber=True)
-
-        # find ASN for each ip
-        # df["routerAsn"] = df["router"].apply(fct)
-        # df["asn"] = df["ip"].apply(fct)
-        # df.loc[df["ip"]=="x", "asn"] = "Pkt.loss"
-        
-        # df["asn"] = df["peerAsn"] #TODO add router ASN as well?
-        # df["position"] = None
-        # df.ix[df["routerAsn"]==df["peerAsn"], ["position"]] = "IN"
-        # df.ix[df["routerAsn"]!=df["peerAsn"], ["position"]] = "OUT"
-        # df["asn"] = df["peerAsn"] + df["label"] + df["position"] 
-
-    if "prefix/24" not in df.columns:
-        df["prefix/24"] = df["ip"].str.extract("([0-9]*\.[0-9]*\.[0-9]*)\.[0-9]*")+".0/24"
-
-    # if "pktDiffAbs" not in df.columns:
-        # df["pktDiffAbs"] = df["pktDiff"].abs()
-
-    # if "corrAbs" not in df.columns:
-        # df["corrAbs"] = df["corr"].abs()
+            # TODO how to handle packet loss on the website ?
+    
+    print "\nRetrieve AS numbers"
+    df =  pd.DataFrame.from_dict(data)
+    df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+    df.set_index("timeBin")
 
     if "resp" not in df.columns:
         g = pd.DataFrame(df.groupby(["timeBin", "router"]).sum())
         df["resp"] = df["pktDiff"]/pd.merge(df, g,left_on=["timeBin","router"], 
                 right_index=True, suffixes=["","_grp"])["pktDiffAbs_grp"] 
         df["resp"] = df["resp"]*df["corrAbs"]
-
-    # Detect and plot events
-    if tau > 0:
-        secondAgg = "asn"
-        groupAsn = df.groupby(["timeBin",secondAgg]).sum()
-        groupAsn["asnL"] = groupAsn.index.get_level_values(secondAgg)
-        groupAsn["timeBin"] = groupAsn.index.get_level_values("timeBin")
-        groupAsn["asnLabel"] = "+"
-        groupAsn.ix[groupAsn["resp"]<0, "asnLabel"] = "-"
-        groupAsn[secondAgg] = groupAsn["asnLabel"]+groupAsn["asnL"]
-        dfGrpAsn = pd.DataFrame(groupAsn)
-        group = dfGrpAsn.groupby(level="timeBin").sum().resample("1H")
-        ## Normalization 
-        mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
-        metricAbs = group[metric]
-        group["metric"] = (metricAbs-pd.rolling_median(metricAbs,historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(metricAbs,historySize,mad,min_periods=minPeriods))
-        events = group[group["metric"].abs()> tau]
-
-        fig = plt.figure(figsize=(9,3))
-        ax = fig.add_subplot(111)
-        ax.plot(group.index.get_level_values("timeBin"), group["metric"])
-        ax.grid(True)
-        plt.title(pltTitle)
-        # plt.ylim([-2, 14])
-        # plt.yscale("log")
-        # plt.ylabel("Accumulated deviation")
-        plt.ylabel("Magnitude (forwarding anomaly)")
-        # plt.title(metric)
-        
-        print "Found %s events" % len(events)
-        print events
     
-        if tfidf_minScore > 0:
-            tfidf(df, events, metric, historySize, tfidf_minScore, ax, group)
-            
-        fig.autofmt_xdate()
-        plt.tight_layout()
-        plt.savefig("fig/tfidf_route.eps")
-        plt.close()
+    secondAgg = "asn"
+    groupAsn = df.groupby(["timeBin",secondAgg]).sum()
+    groupAsn["asnL"] = groupAsn.index.get_level_values(secondAgg)
+    groupAsn["timeBin"] = groupAsn.index.get_level_values("timeBin")
+    groupAsn["asnLabel"] = "+"
+    groupAsn.ix[groupAsn["resp"]<0, "asnLabel"] = "-"
+    groupAsn[secondAgg] = groupAsn["asnLabel"]+groupAsn["asnL"]
+    dfGrpAsn = pd.DataFrame(groupAsn)
 
-    if exportCsv:
-        # asnFile = open("results/csv/forwarding_asn.csv","w")
-        forwardingFile = open("results/csv/forwarding.csv","w")
-
-    # Plot data per AS
-    if plotAsnData or exportCsv:
-        totalEvents = [] 
-        for asn in dfGrpAsn["asnL"].unique():
-            if asn!= "Pkt.Loss" and (len(asnList) == 0 or int(asn) in asnList):
-                print asn
-                fig = plt.figure(figsize=(10,4))
-                # dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2015,4,30,23), u'asn':asn,}, index=[datetime.datetime(2015,4,30,23)])
-                # dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2016,1,1,0), u'asn':asn}, index=[datetime.datetime(2016,1,1,0)])
-                dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2016,11,14,23), u'asn':asn,}, index=[datetime.datetime(2015,11,14,23)])
-                dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2016,11,26,0), u'asn':asn}, index=[datetime.datetime(2016,11,26,0)])
-                dfasn = pd.concat([dfb, dfGrpAsn[dfGrpAsn["asnL"] == asn], dfe])
-                grp = dfasn.groupby("timeBin")
-                grpSum = grp.sum().resample("1H")
-                grpCount = grp.count()
-
-                
-                mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
-                grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
-                events = grpSum[grpSum["metric"]> tau]
-                totalEvents.append(len(events))
-                if len(events):
-                    reportedAsn += 1
-
-                if exportCsv:
-                    # asnFile.write('%s,"%s"\n' % (asn, asname))
-                    dftmp = pd.DataFrame(grpSum)
-                    dftmp["asn"] = asn
-                    dftmp["timeBin"] = dftmp.index
-                    dftmp["label"] = "none" #TODO add tfidf results
-                    dftmp.to_csv(forwardingFile, columns=["metric","resp", "label", "timeBin" ,"asn"],
-                            header=False, index=False, date_format="%Y-%m-%d %H:%M:%S+00", na_rep="0")
-
-                if plotAsnData:
-                    try:
-                        plt.plot(grpSum.index, grpSum["metric"])
-                        plt.grid(True)
-                        plt.title(asn)
-                        plt.ylabel("Magnitude "+metric)
-                        fig.autofmt_xdate()
-                        plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s.eps" % asn))
-                        plt.close()
-                    except ValueError:
-                        pass
-
-                    # # Scatter plot magnitude vs. nb. ips
-                    # fig = plt.figure()
-                    # plt.plot(grpSum["metric"], grpCount["ip"], "*")
-                    # plt.ylabel("# IPs")
-                    # plt.xlabel("Magnitude")
-                    # plt.grid(True)
-                    # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_magnVSlink.eps" % asn))
-                    # plt.close()
-
-                    # Mean and Median
-                    for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                        # Scatter plot magnitude vs. nb. links
-                        grpMean = grp.mean()
-                        grpMedian = grp.median()
-                        fig = plt.figure(figsize=(10,4))
-                        plt.plot(grpMean.index, grpMean[u], label="mean")
-                        plt.plot(grpMedian.index, grpMedian[u], label="median")
-                        plt.ylabel(u)
-                        if u == "devBound":
-                            plt.yscale("log")
-                        plt.grid(True)
-                        plt.title(asn)
-                        fig.autofmt_xdate()
-                        plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s.eps" % (asn, u)))
-                        plt.close()
-
-                    # Sum
-                    for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                        try:
-                            # Scatter plot magnitude vs. nb. links
-                            grpSum = grp.sum()
-                            fig = plt.figure(figsize=(10,4))
-                            plt.plot(grpSum.index, grpSum[u], label="sum")
-                            plt.ylabel(u)
-                            plt.yscale("log")
-                            plt.grid(True)
-                            plt.title(asn)
-                            fig.autofmt_xdate()
-                            plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_sum.eps" % (asn, u)))
-                            plt.close()
-                        except:
-                            continue
-                    # # std. dev.
-                    # for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                        # grpStd = grp.std()
-                        # fig = plt.figure(figsize=(10,4))
-                        # plt.plot(grpStd.index, grpStd[u])
-                        # plt.ylabel(u)
-                        # # plt.yscale("log")
-                        # plt.grid(True)
-                        # plt.title(asn)
-                        # # fig.autofmt_xdate()
-                        # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_std.eps" % (asn, u)))
-                        # plt.close()
-
-                    # # Number ips
-                    # for u in ["corrAbs", "pktDiffAbs", "resp"]:
-                        # if u == "resp":
-                            # dfip = dfasn[dfasn[u]>0.9]
-                        # else:
-                            # dfip = dfasn[dfasn[u]>10]
-                        # grpCrazyIP = dfip.groupby(["timeBin"])
-                        # try:
-                            # grpCrazy = grpCrazyIP.count()
-                            # grpCount = grp.count()
-                            # fig = plt.figure(figsize=(10,4))
-                            # plt.plot(grpCount.index, grpCount["ip"], label="total")
-                            # plt.plot(grpCrazy.index, grpCrazy["ip"], label="crazy")
-                            # plt.ylabel("# reported IPs")
-                            # # plt.yscale("log")
-                            # plt.grid(True)
-                            # plt.title(asn)
-                            # fig.autofmt_xdate()
-                            # plt.savefig("fig/routeChange_asn/"+metric+"/"+tools.str2filename("%s_%s_crazyIP.eps" % (asn, u)))
-                            # plt.close()
-                        # except ValueError:
-                            # pass
-                
-    return df
-
-
-
+    newValues = {}
+    for asn in asnList:
+        dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':starttime, u'asn':asn,}, index=[starttime])
+        dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':endtime, u'asn':asn}, index=[endtime])
+        dfasn = pd.concat([dfb, dfGrpAsn[dfGrpAsn["asn"] == asn], dfe])
+        grp = dfasn.groupby("timeBin")
+        grpSum = grp.sum().resample("1H")
+        grpCount = grp.count()
+        
+        mad= lambda x: np.median(np.fabs(pd.notnull(x) -np.median(pd.notnull(x))))
+        grpSum["metric"] = (grpSum[metric]-pd.rolling_median(grpSum[metric],historySize,min_periods=minPeriods))/(1+1.4826*pd.rolling_apply(grpSum[metric],historySize,mad,min_periods=minPeriods))
+        dftmp = pd.DataFrame(grpSum)
+        newValues[asn] = dftmp[endtime]
+    
+    return newValues
 
 def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
 
@@ -568,7 +414,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
     if alarms and not collection is None:
         collection.insert_many(alarms)
 
-    return (target, routesRef)
+    return (target, routesRef, alarms)
 
 
 if __name__ == "__main__":
