@@ -288,6 +288,8 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
             "nbSamples",
             "corr",
         ],
+        cursor_type=pymongo.cursor.CursorType.EXHAUST,
+        batch_size=int(10e6))
         )
     
     data = {"timeBin":[],  "router":[], "ip": [], "pktDiff": [], "resp": [], "asn": []} 
