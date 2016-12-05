@@ -315,13 +315,10 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
             data["timeBin"].append(row["timeBin"])
             data["ip"].append(ip)
             data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
-            asn = None 
-            if ip in ip2asn:
-                asn = ip2asn[ip]
-            else:
-                asn = asn_by_addr(ip, db=gi)
+            if not ip in ip2asn:
+                ip2asn[ip] = asn_by_addr(ip, db=gi)
 
-            data["asn"].append(asn)
+            data["asn"].append(ip2asn[ip])
 
     
     df =  pd.DataFrame.from_dict(data)
