@@ -132,6 +132,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
     detectionExperiments = db.routeExperiments
+    alarmsCollection = db.routeChanges
 
     if expId == "stream":
         expParam = detectionExperiments.find_one({"stream": True})
@@ -196,7 +197,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target) )
+            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, alarmsCollection) )
 
         mapResult = pool.map(routeChangeDetection, params)
 
@@ -250,10 +251,9 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
-def computeMagnitude(asnList, timeBin, expId, metric="resp", 
+def computeMagnitude(asnList, timeBin, expId, collection, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
-    collection = db.routeChanges
     starttime = timebin-timedelta(hours=historySize)
     endtime =  timebin
     cursor = collection.find( {
@@ -347,11 +347,10 @@ def computeMagnitude(asnList, timeBin, expId, metric="resp",
     
     return magnitudes
 
-def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
+def routeChangeDetection( (routes, routesRef, param, expId, ts, target, collection) ):
 
     alpha = param["alpha"]
     alarms = []
-    collection = db.routeChanges
 
     for ip0, nextHops in routes.iteritems(): 
         nextHopsRef = routesRef[ip0] 
