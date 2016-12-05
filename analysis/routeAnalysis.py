@@ -17,6 +17,7 @@ from multiprocessing import Process, Pool
 import tools
 import cPickle as pickle
 import pygeoip
+import re
 
 from bson import objectid
 
