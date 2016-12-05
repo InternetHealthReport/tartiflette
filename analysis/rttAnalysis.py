@@ -481,8 +481,8 @@ def detectRttChangesMongo(expId=None):
 	cursor = conn.cursor()
         asnList = set(ip2asn.values())
         for asn, asname in asnList:
-            cursor.execute("INSERT INTO ihr_asn (asn, name) SELECT %s, %s \
-                WHERE NOT EXISTS ( SELECT asn FROM example_table WHERE asn= %s);", (asn, asname, asn))
+            cursor.execute("INSERT INTO ihr_asn (number, name) SELECT %s, %s \
+                WHERE NOT EXISTS ( SELECT asn FROM example_table WHERE asn= %s);", (int(asn), asname, asn))
  
         # push alarms to the webserver
         for alarm in lastAlarms:
