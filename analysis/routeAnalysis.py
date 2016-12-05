@@ -16,6 +16,7 @@ import pymongo
 from multiprocessing import Process, Pool
 import tools
 import cPickle as pickle
+import pygeoip
 
 from bson import objectid
 
