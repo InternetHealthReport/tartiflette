@@ -223,7 +223,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
  
         # push alarms to the webserver
         for alarm in lastAlarms:
-            ts = alarm["ts"]+datetime.timedelta(seconds=expParam["timeWindow"]/2)
+            ts = alarm["ts"]+timedelta(seconds=expParam["timeWindow"]/2)
             cursor.execute("INSERT INTO ihr_forwarding_alarms (asn, timebin, ip,  \
                     correlation, samples, refhops, obshops) VALUES (%s, %s, %s, \
                     %s, %s, %s, %s)", (ip2asn[ip][0], ts, alarm["ip"], alarm["corr"],
@@ -254,7 +254,7 @@ def computeMagnitude(asnList, timeBin, expId, metric="resp",
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
     collection = db.routeChanges
-    starttime = timebin-datetime.timedelta(hours=historySize)
+    starttime = timebin-timedelta(hours=historySize)
     endtime =  timebin
     cursor = collection.find( {
             "expId": expId,  

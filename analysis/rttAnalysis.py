@@ -324,7 +324,7 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
         historySize=7*24, minPeriods=0):
 
     # Retrieve alarms
-    starttime = timebin-datetime.timedelta(hours=historySize)
+    starttime = timebin-timedelta(hours=historySize)
     endtime =  timebin
     cursor = collection.aggregate([
         {"$match": {
@@ -490,7 +490,7 @@ def detectRttChangesMongo(expId=None):
  
         # push alarms to the webserver
         for alarm in lastAlarms:
-            ts = alarm["ts"]+datetime.timedelta(seconds=expParam["timeWindow"]/2)
+            ts = alarm["ts"]+timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
                 cursor.execute("INSERT INTO ihr_congestion_alarms (asn, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
