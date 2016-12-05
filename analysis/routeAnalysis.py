@@ -289,14 +289,13 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
         ],
         )
     
-    data = {"timeBin":[],  "router":[], "ip": [], 
-            "pktDiff": [], "nbSamples": [],  "resp": [], "respAbs": [], "asn": []} # "nbPeers": [], "nbSeen": [],
+    data = {"timeBin":[],  "router":[], "ip": [], "pktDiff": [], "resp": [], "asn": []} 
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
     for i, row in enumerate(cursor):
         print "%dk \r" % (i/1000), 
-        obsList = row["obsNextHops"] #eval("{"+row["obsNextHops"].partition("{")[2][:-1])
-        refDict = dict(row["refNextHops"]) #eval("{"+row["refNextHops"].partition("{")[2][:-1])
+        obsList = row["obsNextHops"] 
+        refDict = dict(row["refNextHops"]) 
         sumPktDiff = 0
         for ip, pkt in obsList:
             sumPktDiff += np.abs(pkt - refDict[ip])
@@ -312,7 +311,6 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
             data["router"].append(row["ip"])
             data["timeBin"].append(row["timeBin"])
             data["ip"].append(ip)
-            data["nbSamples"].append(row["nbSamples"])
             data["resp"].append(corrAbs * (pktDiff/sumPktDiff) )
             if ip == "x":
                 data["asn"].append("Pkt.Loss")
@@ -321,7 +319,6 @@ def computeMagnitude(asnList, timeBin, expId, collection, metric="resp",
 
             # TODO how to handle packet loss on the website ?
     
-    print "\nRetrieve AS numbers"
     df =  pd.DataFrame.from_dict(data)
     df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
     df.set_index("timeBin")
