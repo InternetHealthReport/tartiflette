@@ -491,7 +491,7 @@ def detectRttChangesMongo(expId=None):
                 if not ip in ip2asn:
                     ip2asn[ip] =asn_by_addr(ip,db=gi)
                     
-                cursor.execute("INSERT INTO ihr_congestion_alarms (asn, timebin, ip, link, \
+                cursor.execute("INSERT INTO ihr_congestion_alarms (asn_id, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
                         %s, %s, %s, %s)", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
                         alarm["medianRtt"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"]))
@@ -499,7 +499,7 @@ def detectRttChangesMongo(expId=None):
         # compute magnitude
         mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId, alarmsCollection )
         for asn in asnList:
-            cursor.execute("INSERT INTO ihr_congestion (asn, timebin, magnitude) \
+            cursor.execute("INSERT INTO ihr_congestion (asn_id, timebin, magnitude) \
             VALUES (%s, %s, %s)", (asn[0], expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn])) 
 
 
