@@ -261,12 +261,6 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         
 
 
-    for ref, label in [(sampleMediandiff, "diffRTT")]:
-        if not ref is None:
-            print "Writing %s reference to file system." % (label)
-            fi = open("saved_references/%s_%s.pickle" % (expId, label), "w")
-            pickle.dump(ref, fi, 2) 
-
     print "Writing route change reference to file system." 
     fi = open("saved_references/%s_routeChange.pickle" % (expId), "w")
     pickle.dump(refRoutes, fi, 2) 
