@@ -257,7 +257,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
                     alarm["pktDiff"], alarm["previousHop"]))
 
         conn.commit()
-        cur.close()
+        cursor.close()
         conn.close()
         
 
