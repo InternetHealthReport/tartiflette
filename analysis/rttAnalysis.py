@@ -184,8 +184,8 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
         return diffRtt, nbRow
 
 
-def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, gi,
-    collection=None):
+def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2asn, gi,
+    collection=None, streaming=False, ip2asn=None):
 
     if sampleDistributions is None:
         return
@@ -207,11 +207,11 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
         asnProbeIdx = defaultdict(list)
 
         for idx, ip in enumerate(data["probe"]):
-            if not ip in ip2asn:
+            if not ip in probe2asn:
                 a = asn_by_addr(ip,db=gi)
-                ip2asn[ip] = a 
+                probe2asn[ip] = a 
             else:
-                a = ip2asn[ip]
+                a = probe2asn[ip]
             asn[a] += 1
             asnProbeIdx[a].append(idx)
                 
@@ -258,29 +258,35 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, ip2asn, 
             # detection
             ref = smoothMean[ipPair]
     
-            if ref["nbSeen"] >= minSeen and (ref["high"] < currLow or ref["low"] > currHi):
-                if med < ref["mean"]:
-                    diff = currHi - ref["low"]
-                    diffMed = med - ref["mean"]
-                    deviation = diffMed / (ref["low"]-ref["mean"])
-                    devBound = diff / (ref["low"]-ref["mean"])
-                else:
-                    diff = currLow - ref["high"]
-                    diffMed = med - ref["mean"]
-                    deviation = diffMed / (ref["high"]-ref["mean"])
-                    devBound = diff / (ref["high"]-ref["mean"])
+            if ref["nbSeen"] >= minSeen:
+                if streaming:
+                    for ip in ipPair:
+                        if not ip in ip2asn:
+                            ip2asn[ip] = asn_by_addr(ip, db=gi)
 
-                alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
-                        "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
-                        "median": med, "nbSamples": n, "nbProbes": nbProbes, "deviation": deviation,
-                        "diff": diff, "expId": expId, "diffMed": diffMed, "samplePerASN": list(asn),
-                        "nbASN": len(asn), "asnEntropy": asnEntropy, "nbSeen": ref["nbSeen"],
-                        "devBound": devBound, "trimDist": trimDist}
+                if (ref["high"] < currLow or ref["low"] > currHi):
+                    if med < ref["mean"]:
+                        diff = currHi - ref["low"]
+                        diffMed = med - ref["mean"]
+                        deviation = diffMed / (ref["low"]-ref["mean"])
+                        devBound = diff / (ref["low"]-ref["mean"])
+                    else:
+                        diff = currLow - ref["high"]
+                        diffMed = med - ref["mean"]
+                        deviation = diffMed / (ref["high"]-ref["mean"])
+                        devBound = diff / (ref["high"]-ref["mean"])
 
-                reported = True
+                    alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
+                            "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
+                            "median": med, "nbSamples": n, "nbProbes": nbProbes, "deviation": deviation,
+                            "diff": diff, "expId": expId, "diffMed": diffMed, "samplePerASN": list(asn),
+                            "nbASN": len(asn), "asnEntropy": asnEntropy, "nbSeen": ref["nbSeen"],
+                            "devBound": devBound, "trimDist": trimDist}
 
-                if not collection is None:
-                    alarms.append(alarm)
+                    reported = True
+
+                    if not collection is None:
+                        alarms.append(alarm)
             
             # update reference
             ref["nbSeen"] += 1
@@ -429,6 +435,7 @@ def detectRttChangesMongo(expId=None):
     if not expParam["prefixes"] is None:
         expParam["prefixes"] = re.compile(expParam["prefixes"])
 
+    probe2asn = {}
     ip2asn = {}
     lastAlarms = []
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
@@ -463,7 +470,7 @@ def detectRttChangesMongo(expId=None):
 
         # Detect oulier values
         lastAlarms = outlierDetection(diffRtt, sampleMediandiff, expParam, expId, 
-                    datetime.utcfromtimestamp(currDate), ip2asn, gi, alarmsCollection)
+                    datetime.utcfromtimestamp(currDate), probe2asn, gi, alarmsCollection, streaming, ip2asn)
 
         timeSpent = (time.time()-tsS)
         sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
@@ -474,16 +481,11 @@ def detectRttChangesMongo(expId=None):
     # Update results on the webserver
     if streaming:
         # update ASN table
-	ip2asn = {}
         conn_string = "host='romain.iijlab.net' dbname='ihr'"
  
         # get a connection, if a connect cannot be made an exception will be raised here
 	conn = psycopg2.connect(conn_string)
 	cursor = conn.cursor()
-        for alarm in lastAlarms:
-            for ip in alarm["ipPair"]:
-                if not ip in ip2asn:
-                    ip2asn[ip] =asn_by_addr(ip,db=gi)
 
         asnList = set(ip2asn.values())
         for asn, asname in asnList:
@@ -494,7 +496,6 @@ def detectRttChangesMongo(expId=None):
         for alarm in lastAlarms:
             ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
-                    
                 cursor.execute("INSERT INTO ihr_congestion_alarms (asn_id, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
                         %s, %s, %s, %s, %s)", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
