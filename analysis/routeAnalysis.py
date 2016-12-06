@@ -242,8 +242,8 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # compute magnitude
         mag, alarms = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId, ip2asn, alarmsCollection)
         for asn, asname in asnList:
-            cursor.execute("INSERT INTO ihr_congestion (asn_id, timebin, magnitude) \
-            VALUES (%s, %s, %s)", (int(asn), expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn])) 
+            cursor.execute("INSERT INTO ihr_congestion (asn_id, timebin, magnitude, resp, label) \
+            VALUES (%s, %s, %s)", (int(asn), expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn], 0, "")) 
 	
         conn.commit()
 
