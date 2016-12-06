@@ -493,14 +493,14 @@ def detectRttChangesMongo(expId=None):
                     
                 cursor.execute("INSERT INTO ihr_congestion_alarms (asn_id, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
-                        %s, %s, %s, %s)", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
-                        alarm["medianRtt"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"]))
+                        %s, %s, %s, %s, %s)", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
+                        alarm["median"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"]))
 
         # compute magnitude
         mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId, alarmsCollection )
-        for asn in asnList:
+        for asn, asname in asnList:
             cursor.execute("INSERT INTO ihr_congestion (asn_id, timebin, magnitude) \
-            VALUES (%s, %s, %s)", (asn[0], expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn])) 
+            VALUES (%s, %s, %s)", (asn, expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn])) 
 
 
     for ref, label in [(sampleMediandiff, "diffRTT")]:
