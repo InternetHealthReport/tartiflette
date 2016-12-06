@@ -50,7 +50,7 @@ def readOneTraceroute(trace, routes):
     """
     
     # TODO verify that error doesn't mean packet lost
-    if trace is None or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
+    if trace is None or not "dst_addr" in trace or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
         return 
 
     ipProbe = "probe_%s"  % trace["prb_id"]
