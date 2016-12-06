@@ -479,6 +479,11 @@ def detectRttChangesMongo(expId=None):
         # get a connection, if a connect cannot be made an exception will be raised here
 	conn = psycopg2.connect(conn_string)
 	cursor = conn.cursor()
+        for alarm in lastAlarms:
+            for ip in alarm["ipPair"]:
+                if not ip in ip2asn:
+                    ip2asn[ip] =asn_by_addr(ip,db=gi)
+
         asnList = set(ip2asn.values())
         for asn, asname in asnList:
             cursor.execute("INSERT INTO ihr_asn (number, name) SELECT %s, %s \
@@ -488,8 +493,6 @@ def detectRttChangesMongo(expId=None):
         for alarm in lastAlarms:
             ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
-                if not ip in ip2asn:
-                    ip2asn[ip] =asn_by_addr(ip,db=gi)
                     
                 cursor.execute("INSERT INTO ihr_congestion_alarms (asn_id, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
