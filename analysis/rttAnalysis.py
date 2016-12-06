@@ -474,6 +474,7 @@ def detectRttChangesMongo(expId=None):
     # Update results on the webserver
     if streaming:
         # update ASN table
+	ip2asn = {}
         conn_string = "host='romain.iijlab.net' dbname='ihr'"
  
         # get a connection, if a connect cannot be made an exception will be raised here

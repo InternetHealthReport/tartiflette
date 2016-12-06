@@ -253,8 +253,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             if alarm["asn"] in mag:
                 cursor.execute("INSERT INTO ihr_forwarding_alarms (asn_id, timebin, ip,  \
                     correlation, responsibility, pktdiff, previoushop ) VALUES (%s, %s, %s, \
-                    %s, %s, %s, %s)", (int(alarm["asn"]), ts, alarm["ip"], alarm["correlation"], alarm["responsibility"],
-                    alarm["pktDiff"], alarm["previousHop"]))
+                    %s, %s, %s, %s)", (int(alarm["asn"]), ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
 
         conn.commit()
         cursor.close()
