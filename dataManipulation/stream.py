@@ -46,10 +46,10 @@ def on_result_response(*args):
     global currCollection
     global db
     global lastDownload
-    global nbTraces
 
     lastDownload = datetime.datetime.now()
     trace = args[0]
+    print trace
     if lastTimestamp/(24*3600) != trace["timestamp"]/(24*3600) or currCollection is None:
         d = datetime.datetime.utcfromtimestamp(trace["timestamp"])
         coll = "traceroute_%s_%02d_%02d" % (d.year, d.month, d.day)
@@ -58,9 +58,6 @@ def on_result_response(*args):
         lastTimestamp = trace["timestamp"]
 
     currCollection.insert_one(trace)
-
-    nbTraces += 1
-    # print "\r %s traceroutes received" % nbTraces
 
 
 def on_error(*args):
@@ -122,7 +119,6 @@ if __name__ == "__main__":
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
 
-    nbTraces = 0
     lastTimestamp = 0
     currCollection = None
     lastDownload = None
