@@ -49,7 +49,6 @@ def on_result_response(*args):
 
     lastDownload = datetime.datetime.now()
     trace = args[0]
-    print trace
     if lastTimestamp/(24*3600) != trace["timestamp"]/(24*3600) or currCollection is None:
         d = datetime.datetime.utcfromtimestamp(trace["timestamp"])
         coll = "traceroute_%s_%02d_%02d" % (d.year, d.month, d.day)
