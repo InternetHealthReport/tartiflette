@@ -430,11 +430,9 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
                 hops = hops[mask]
                 probes = probes[mask]
 
-
-            #OLD CODE STARTS HERE
             count = []
             countRef = []
-            avg = len(probes)nbSamples 
+            avg = len(probes)
             nbSamplesRef = np.sum([x for x in nextHopsRef.values() if isinstance(x, float)])
             avgRef = nbSamplesRef 
             # Refresh allHops list
