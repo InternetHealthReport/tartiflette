@@ -295,6 +295,9 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
                 ref["high"].append(currHi)
                 ref["low"].append(currLow)
             elif ref["nbSeen"] == minSeen:            # end of the bootstrap
+                ref["mean"].append(med)
+                ref["high"].append(currHi)
+                ref["low"].append(currLow)
                 ref["mean"] = float(np.median(ref["mean"]))
                 ref["high"] = float(np.median(ref["high"]))
                 ref["low"] = float(np.median(ref["low"]))

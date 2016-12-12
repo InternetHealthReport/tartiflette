@@ -214,6 +214,8 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             refRoutes = defaultdict(routeCountRef)
         sys.stderr.write("done!\n")
 
+    probe2asn = {}
+    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
     nbIteration = 0
@@ -235,7 +237,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target ) )
+            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn, gi ) )
 
         mapResult = pool.map(routeChangeDetection, params)
 
@@ -260,7 +262,6 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         asnList = cursor.fetchall()   
  
         ip2asn = {} 
-        gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
         # compute magnitude
         mag, alarms = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId, ip2asn, alarmsCollection)
         for asn, asname in asnList:
@@ -369,7 +370,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
     
     return magnitudes, alarms
 
-def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
+def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2asn, gi) ):
 
     collection = db.routeChanges
     alpha = param["alpha"]
@@ -386,7 +387,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
                 allHops.add(key)
         
         reported = False
-        if len(allHops) > 2  and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= param["minSeen"]: 
+        if len(allHops) > 2  : 
             probes = np.array([p for probeIP in nextHops.values() for p in probeIP])
             hops = np.array([hop for hop, probeIP in nextHops.iteritems() for p in probeIP])
             mask = np.array([True]*len(hops))
@@ -430,11 +431,6 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
                 hops = hops[mask]
                 probes = probes[mask]
 
-            count = []
-            countRef = []
-            avg = len(probes)
-            nbSamplesRef = np.sum([x for x in nextHopsRef.values() if isinstance(x, float)])
-            avgRef = nbSamplesRef 
             # Refresh allHops list
             allHops = set(["0"])
             for key in set(hops).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
@@ -442,11 +438,13 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
                 if nextHops[key] or nextHopsRef[key]:
                     allHops.add(key)
         
+            count = []
+            countRef = []
             for ip1 in allHops:
                 count.append(np.count_nonzero(hops == ip1))
                 countRef.append(nextHopsRef[ip1])
 
-            if len(count) > 1:
+            if len(count) > 1 and and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= param["minSeen"]:
                 if np.std(count) == 0 or np.std(countRef) == 0:
                     print "%s, %s, %s, %s" % (allHops, countRef, count, nextHopsRef)
                 corr = np.corrcoef(count,countRef)[0][1]
@@ -464,20 +462,32 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
                     else:
                         alarms.append(alarm)
 
-        # Update the reference
-        if not "stats" in nextHopsRef:
-            nextHopsRef["stats"] = {"nbSeen":  0, "firstSeen": ts,
-                    "lastSeen": ts, "nbReported": 0}
+            # Update the reference
+            if not "stats" in nextHopsRef:
+                nextHopsRef["stats"] = {"nbSeen":  0, "firstSeen": ts,
+                        "lastSeen": ts, "nbReported": 0}
+                for ip1 in allHops:
+                    nextHopsRef[ip1] = []
 
-        if reported:
-            nextHopsRef["stats"]["nbReported"] += 1
+            if reported:
+                nextHopsRef["stats"]["nbReported"] += 1
 
-        nextHopsRef["stats"]["nbSeen"] += 1
-        nextHopsRef["stats"]["lastSeen"] = ts 
+            nextHopsRef["stats"]["nbSeen"] += 1
+            nextHopsRef["stats"]["lastSeen"] = ts 
 
-        for ip1 in allHops:
-            newCount = nextHops[ip1]
-            nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
+            if ref["nbSeen"] < minSeen:                 # still in the bootstrap
+                for ip1 in allHops:
+                    newCount = np.count_nonzero(hops == ip1)
+                    nextHopsRef[ip1].append(newCount)
+            elif ref["nbSeen"] == minSeen:              # end of bootstrap
+                for ip1 in allHops:
+                    newCount = np.count_nonzero(hops == ip1)
+                    nextHopsRef[ip1].append(newCount)
+                    nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
+            else:
+                for ip1 in allHops:
+                    newCount = np.count_nonzero(hops == ip1)
+                    nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
 
     # Insert all alarms to the database
     if alarms and not collection is None:
