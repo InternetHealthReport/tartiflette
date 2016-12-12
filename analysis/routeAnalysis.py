@@ -450,9 +450,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
 
                     reported = True
                     alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target,
-                            "refNextHops": list(nextHopsRef.iteritems()), "obsNextHops": list(nextHops.iteritems()),
-                            "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count),
-                            "nbSeen": nextHopsRef["stats"]["nbSeen"]}
+                            "refNextHops": list(nextHopsRef.iteritems()), "obsNextHops": [(k, len(v)) for k, v in nextHops.iteritems()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"]}
 
                     if collection is None:
                         # Write the result to the standard output
@@ -473,11 +471,11 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
             nextHopsRef["stats"]["nbSeen"] += 1
             nextHopsRef["stats"]["lastSeen"] = ts 
 
-            if ref["nbSeen"] < minSeen:                 # still in the bootstrap
+            if nextHopsRef["stats"]["nbSeen"]< minSeen:                 # still in the bootstrap
                 for ip1 in allHops:
                     newCount = np.count_nonzero(hops == ip1)
                     nextHopsRef[ip1].append(newCount)
-            elif ref["nbSeen"] == minSeen:              # end of bootstrap
+            elif nextHopsRef["stats"]["nbSeen"]== minSeen:              # end of bootstrap
                 for ip1 in allHops:
                     newCount = np.count_nonzero(hops == ip1)
                     nextHopsRef[ip1].append(newCount)
