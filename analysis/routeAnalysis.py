@@ -136,7 +136,7 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
     nbRow = 0 
     for i, (oneProcResult, compRows) in enumerate(poolResults):
         for target, routes in oneProcResult.iteritems():
-            for ip0Dict, nextHops in routes.iteritems(): 
+            for ip0, nextHops in routes.iteritems(): 
                 ip0Counter = mergedRoutes[target][ip0]
                 for ip1, count in nextHops.iteritems():
                     if ip1 in ip0Counter:
