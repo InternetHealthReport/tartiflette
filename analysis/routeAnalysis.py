@@ -213,7 +213,6 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         sys.stderr.write("done!\n")
 
     probe2asn = {}
-    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
     nbIteration = 0
@@ -235,7 +234,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn, gi ) )
+            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn) )
 
         mapResult = pool.map(routeChangeDetection, params)
 
@@ -368,13 +367,14 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
     
     return magnitudes, alarms
 
-def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2asn, gi) ):
+def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2asn) ):
 
     collection = db.routeChanges
     alpha = param["alpha"]
     minAsn= param["minASN"]
     minASNEntropy= param["minASNEntropy"]
     alarms = []
+    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
     for ip0, nextHops in routes.iteritems(): 
         nextHopsRef = routesRef[ip0] 
