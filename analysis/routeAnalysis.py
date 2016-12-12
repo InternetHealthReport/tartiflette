@@ -373,6 +373,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
     alpha = param["alpha"]
     minAsn= param["minASN"]
     minASNEntropy= param["minASNEntropy"]
+    minSeen = param["minSeen"]
     alarms = []
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
@@ -442,7 +443,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
                 count.append(np.count_nonzero(hops == ip1))
                 countRef.append(nextHopsRef[ip1])
 
-            if len(count) > 1 and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= param["minSeen"]:
+            if len(count) > 1 and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= minSeen:
                 if np.std(count) == 0 or np.std(countRef) == 0:
                     print "%s, %s, %s, %s" % (allHops, countRef, count, nextHopsRef)
                 corr = np.corrcoef(count,countRef)[0][1]
