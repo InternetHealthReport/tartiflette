@@ -62,8 +62,6 @@ def readOneTraceroute(trace, routes):
     if trace is None or not "dst_addr" in trace or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
         return 
 
-    # ipProbe = "probe_%s"  % trace["prb_id"]
-
     probeIp = trace["from"]
     dstIp = trace["dst_addr"]
     listRouter = routes[dstIp]
@@ -119,7 +117,7 @@ def countRoutes( (af, start, end) ):
     for col in collectionNames:
         collection = db[col]
         cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
-                projection={"result":1, "prb_id":1, "dst_addr":1} , 
+                projection={"result":1, "from":1, "dst_addr":1} , 
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 batch_size=int(10e6))
         for trace in cursor: 
