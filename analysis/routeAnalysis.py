@@ -37,9 +37,19 @@ def asn_by_addr(ip, db=None):
         return ("0", "Unk")
 
 
-# type needed for child processes
+# type needed for reference
 def ddType():
     return defaultdict(float)
+
+
+def routeCountRef():
+    return defaultdict(ddType)
+
+
+# type needed for child processes
+def ddlistType():
+    return defaultdict(list)
+
 
 def routeCount():
     return defaultdict(ddType)
@@ -49,14 +59,15 @@ def readOneTraceroute(trace, routes):
     """Read a single traceroute instance and compute the corresponding routes.
     """
     
-    # TODO verify that error doesn't mean packet lost
     if trace is None or not "dst_addr" in trace or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
         return 
 
-    ipProbe = "probe_%s"  % trace["prb_id"]
+    # ipProbe = "probe_%s"  % trace["prb_id"]
+
+    probeIp = trace["from"]
     dstIp = trace["dst_addr"]
     listRouter = routes[dstIp]
-    prevIps = [ipProbe]*3
+    prevIps = [probeIp]*3
     currIps = []
 
     for hop in trace["result"]:
@@ -74,7 +85,10 @@ def readOneTraceroute(trace, routes):
                     ip = res["from"]
 
                 for prevIp in prevIps:
-                    listRouter[prevIp][ip] += 1
+                    if ip in listRouter[prevIp]:
+                        listRouter[prevIp][ip].append(probeIp)
+                    else:
+                        listRouter[prevIp][ip] = [probeIp]
 
                 currIps.append(ip)
     
@@ -124,10 +138,13 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
     nbRow = 0 
     for i, (oneProcResult, compRows) in enumerate(poolResults):
         for target, routes in oneProcResult.iteritems():
-            for ip0, nextHops in routes.iteritems(): 
+            for ip0Dict, nextHops in routes.iteritems(): 
                 ip0Counter = mergedRoutes[target][ip0]
                 for ip1, count in nextHops.iteritems():
-                    ip0Counter[ip1] += count
+                    if ip1 in ip0Counter:
+                        ip0Counter[ip1].extend(count)
+                    else:
+                        ip0Counter[ip1] = count 
 
         nbRow += compRows
         timeSpent = (time.time()-tsS)
@@ -162,13 +179,15 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
                 "alpha": 0.01, # parameter for exponential smoothing 
                 "minCorr": -0.25, # correlation scores lower than this value will be reported
                 "minSeen": 3,
+                "minASN": 3,
+                "minASNEntropy": 0.5,
                 "af": "",
                 "experimentDate": datetime.now(),
                 "comment": "Study case for Emile (8.8.8.8) Nov. 2016",
                 }
 
         expId = detectionExperiments.insert_one(expParam).inserted_id 
-        refRoutes = defaultdict(routeCount)
+        refRoutes = defaultdict(routeCountRef)
 
     else:
         # Streaming mode: analyze the last time bin
@@ -178,6 +197,9 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) - timedelta(hours=1) 
         expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
         expParam["analysisTimeUTC"] = now
+        #TODO remove the 2 following lines: force minASN and entropy threshold
+        expParam["minASN"]=3
+        expParam["minASNEntropy"]= 0.5
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
             print "Problem happened when updating the experiment dates!"
@@ -189,7 +211,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             fi = open("saved_references/%s_%s.pickle" % (expId, "routeChange"), "rb")
             refRoutes = pickle.load(fi) 
         except IOError:
-            refRoutes = defaultdict(routeCount)
+            refRoutes = defaultdict(routeCountRef)
         sys.stderr.write("done!\n")
 
     start = int(calendar.timegm(expParam["start"].timetuple()))
@@ -351,6 +373,8 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
 
     collection = db.routeChanges
     alpha = param["alpha"]
+    minAsn= param["minASN"]
+    minASNEntropy= param["minASNEntropy"]
     alarms = []
 
     for ip0, nextHops in routes.iteritems(): 
@@ -362,15 +386,66 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target) ):
                 allHops.add(key)
         
         reported = False
-        nbSamples = np.sum(nextHops.values())
-        nbSamplesRef = np.sum([x for x in nextHopsRef.values() if isinstance(x, float)])
         if len(allHops) > 2  and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= param["minSeen"]: 
+            probes = np.array([p for probeIP in nextHops.values() for p in probeIP])
+            hops = np.array([hop for hop, probeIP in nextHops.iteritems() for p in probeIP])
+            mask = np.array([True]*len(hops))
+            asn = defaultdict(int)
+            asnProbeIdx = defaultdict(list)
+
+            for idx, ip in enumerate(probes):
+                if not ip in probe2asn:
+                    a = asn_by_addr(ip,db=gi)
+                    probe2asn[ip] = a 
+                else:
+                    a = probe2asn[ip]
+                asn[a] += 1
+                asnProbeIdx[a].append(idx)
+                    
+            asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
+            trimDist = False
+        
+            # trim the distribution if needed
+            while asnEntropy < minASNEntropy and len(asn) > minAsn:
+
+                #remove one sample from the most prominent AS
+                maxAsn = max(asn, key=asn.get)
+                remove = random.randrange(0,len(asnProbeIdx[maxAsn]))
+                rmIdx = asnProbeIdx[maxAsn].pop(remove)
+                mask[rmIdx] = False
+                asn[maxAsn] -= 1
+                #remove the AS if we removed all its probes
+                if asn[maxAsn] <= 0:
+                    asn.pop(maxAsn, None)
+            
+                # recompute the entropy
+                asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
+                trimDist = True 
+
+            if len(asn) < minAsn or asnEntropy < minASNEntropy:
+                continue
+
+            # if trimmed then update the sample dist and probes
+            if trimDist:
+                hops = hops[mask]
+                probes = probes[mask]
+
+
+            #OLD CODE STARTS HERE
             count = []
             countRef = []
-            avg = nbSamples 
+            avg = len(probes)nbSamples 
+            nbSamplesRef = np.sum([x for x in nextHopsRef.values() if isinstance(x, float)])
             avgRef = nbSamplesRef 
+            # Refresh allHops list
+            allHops = set(["0"])
+            for key in set(hops).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
+                # Make sure we don't count ip that are not observed in both variables
+                if nextHops[key] or nextHopsRef[key]:
+                    allHops.add(key)
+        
             for ip1 in allHops:
-                count.append(nextHops[ip1])
+                count.append(np.count_nonzero(hops == ip1))
                 countRef.append(nextHopsRef[ip1])
 
             if len(count) > 1:
