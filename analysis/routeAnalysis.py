@@ -21,6 +21,8 @@ import socket
 import re
 import pandas as pd
 import psycopg2
+import random
+import statsmodels.api as sm
 
 from bson import objectid
 
