@@ -301,7 +301,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
     cursor = collection.find( {
             "expId": expId,  
             "corr": {"$lt": corrThresh},
-            "timeBin": {"$gt": starttime, "$lte": timeBin},
+            "timeBin": {"$gt": starttime},
             "nbPeers": {"$gt": 2},
             "nbSamples": {"$gt": 8},
         }, 
