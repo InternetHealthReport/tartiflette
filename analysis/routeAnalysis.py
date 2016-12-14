@@ -474,19 +474,25 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
             nextHopsRef["stats"]["nbSeen"] += 1
             nextHopsRef["stats"]["lastSeen"] = ts 
 
-            if nextHopsRef["stats"]["nbSeen"]< minSeen:                 # still in the bootstrap
-                for ip1 in allHops:
-                    newCount = np.count_nonzero(hops == ip1)
-                    nextHopsRef[ip1].append(newCount)
-            elif nextHopsRef["stats"]["nbSeen"]== minSeen:              # end of bootstrap
-                for ip1 in allHops:
-                    newCount = np.count_nonzero(hops == ip1)
-                    nextHopsRef[ip1].append(newCount)
+            #if nextHopsRef["stats"]["nbSeen"]< minSeen:                 # still in the bootstrap
+                #for ip1 in allHops:
+                    #newCount = np.count_nonzero(hops == ip1)
+                    #if not ip1 in nextHopsRef:
+                        #nextHopsRef[ip1] = []
+                    #nextHopsRef[ip1].append(newCount)
+            #elif nextHopsRef["stats"]["nbSeen"]== minSeen:              # end of bootstrap
+                #for ip1 in allHops:
+                    #newCount = np.count_nonzero(hops == ip1)
+                    #if not ip1 in nextHopsRef:
+                        #nextHopsRef[ip1] = []
+                    #nextHopsRef[ip1].append(newCount)
+                    #nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
+            #else:
+            for ip1 in allHops:
+                newCount = np.count_nonzero(hops == ip1)
+                if isinstance(nextHopsRef[ip1], list):
                     nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
-            else:
-                for ip1 in allHops:
-                    newCount = np.count_nonzero(hops == ip1)
-                    nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
+                nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
 
     # Insert all alarms to the database
     if alarms and not collection is None:
