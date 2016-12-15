@@ -54,7 +54,7 @@ def ddlistType():
 
 
 def routeCount():
-    return defaultdict(ddType)
+    return defaultdict(ddlistType)
 
 
 def readOneTraceroute(trace, routes):
@@ -465,8 +465,8 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
             if not "stats" in nextHopsRef:
                 nextHopsRef["stats"] = {"nbSeen":  0, "firstSeen": ts,
                         "lastSeen": ts, "nbReported": 0}
-                for ip1 in allHops:
-                    nextHopsRef[ip1] = []
+                #for ip1 in allHops:
+                    #nextHopsRef[ip1] = []
 
             if reported:
                 nextHopsRef["stats"]["nbReported"] += 1
