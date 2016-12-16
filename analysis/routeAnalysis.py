@@ -158,7 +158,7 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO config file implementation
 
     streaming = False
-    nbProcesses = 12 
+    nbProcesses = 12
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
@@ -389,7 +389,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
         
         reported = False
         if len(allHops) > 2  : 
-            probes = np.array([p for probeIP in nextHops.values() for p in probeIP])
+            probes = np.array([p for hop, probeIP in nextHops.iteritems() for p in probeIP])
             hops = np.array([hop for hop, probeIP in nextHops.iteritems() for p in probeIP])
             mask = np.array([True]*len(hops))
             asn = defaultdict(int)
@@ -446,14 +446,12 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
                 countRef.append(nextHopsRef[ip1])
 
             if len(count) > 1 and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= minSeen:
-                if np.std(count) == 0 or np.std(countRef) == 0:
-                    print "%s, %s, %s, %s" % (allHops, countRef, count, nextHopsRef)
                 corr = np.corrcoef(count,countRef)[0][1]
                 if corr < param["minCorr"]:
+                    nbSamples = len(probes)
 
                     reported = True
-                    alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target,
-                            "refNextHops": list(nextHopsRef.iteritems()), "obsNextHops": [(k, len(v)) for k, v in nextHops.iteritems()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"]}
+                    alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target, "refNextHops": [(k, v) for k,v in nextHopsRef.iteritems()], "obsNextHops": [(k, len(v)) for k, v in nextHops.iteritems()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"]}
 
                     if collection is None:
                         # Write the result to the standard output
