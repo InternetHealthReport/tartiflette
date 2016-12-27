@@ -336,7 +336,10 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
                     # # TODO how to handle packet loss on the website ?
                 continue
 
-            pktDiff = pkt - refDict[ip] 
+            if ip in refDict:
+                pktDiff = pkt - refDict[ip] 
+            else:
+                pktDiff = pkt
 
             corrAbs = np.abs(row["corr"])
             data["pktDiff"].append(pktDiff)
