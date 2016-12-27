@@ -325,7 +325,10 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
         refDict = dict(row["refNextHops"]) 
         sumPktDiff = 0
         for ip, pkt in obsList:
-            sumPktDiff += np.abs(pkt - refDict[ip])
+            if ip in refDict:
+                sumPktDiff += np.abs(pkt - refDict[ip])
+            else:
+                sumPktDiff += pkt 
 
         for ip, pkt in obsList:
             if ip == "0" or ip == "x":
