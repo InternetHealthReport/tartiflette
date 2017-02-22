@@ -329,6 +329,22 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
 
     return alarms
 
+
+def cleanRef(ref, currDate, maxSilence=7):
+
+    toRemove = []
+    for ipPair, data in ref.iteritems():
+        if data["lastSeen"] < currDate - timedelta(days=maxSilence):
+            toRemove.append(ipPair)
+
+    for ipPair in toRemove:
+        del ref[ipPair]
+
+    print "Removed references for %s ips" % len(toRemove)
+
+    return ref
+
+
 def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBound",
         historySize=7*24, minPeriods=0):
 
@@ -514,12 +530,13 @@ def detectRttChangesMongo(expId=None):
         cursor.close()
         conn.close()
 
+        print "Cleaning rtt change reference." 
+        sampleMediandiff = cleanRef(sampleMediandiff, datetime.utcfromdatetime(currDate))
 
-    for ref, label in [(sampleMediandiff, "diffRTT")]:
-        if not ref is None:
-            print "Writing %s reference to file system." % (label)
-            fi = open("saved_references/%s_%s.pickle" % (expId, label), "w")
-            pickle.dump(ref, fi, 2) 
+    print "Writing diffRTT reference to file system." 
+    fi = open("saved_references/%s_diffRTT.pickle" % (expId, label), "w")
+    pickle.dump(sampleMediandiff, fi, 2) 
+
 
 
 if __name__ == "__main__":

@@ -250,7 +250,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
 
 
     # Update results on the webserver
-    if streaming:
+    if streaming and False:
         # update ASN table
         conn_string = "host='romain.iijlab.net' dbname='ihr'"
  
@@ -281,6 +281,8 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         cursor.close()
         conn.close()
         
+    print "Cleaning route change reference." 
+    refRoutes = cleanRef(refRoutes, datetime.utcfromdatetime(currDate))
 
 
     print "Writing route change reference to file system." 
@@ -292,6 +294,21 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.join()
     
 
+def cleanRef(refRoutes, currDate, maxSilence=7):
+
+    toRemove = []
+    for ip, nh in refRoutes.iteritems():
+        if nh["stats"]["lastSeen"] < currDate - timedelta(days=maxSilence):
+            toRemove.append(ip)
+
+    for ip in toRemove:
+        del refRoutes[ip]
+
+    print "Removed references for %s ips" % len(toRemove)
+
+    return refRoutes
+
+# TODO remove the following function
 def repare(dt, asnList, ip2asn, expId, alarmsCollection, timeWindow=60*60):
     # update ASN table
     conn_string = "host='romain.iijlab.net' dbname='ihr'"
