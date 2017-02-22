@@ -275,7 +275,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             if alarm["asn"] in mag:
                 cursor.execute("INSERT INTO ihr_forwarding_alarms (asn_id, timebin, ip,  \
                     correlation, responsibility, pktdiff, previoushop ) VALUES (%s, %s, %s, \
-                    %s, %s, %s, %s)", (int(alarm["asn"]), ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
+                    %s, %s, %s, %s)", (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
 
         conn.commit()
         cursor.close()
@@ -291,6 +291,37 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
+
+def repare(dt, asnList, ip2asn, expId, alarmsCollection, timeWindow=60*60):
+    # update ASN table
+    conn_string = "host='romain.iijlab.net' dbname='ihr'"
+
+    # get a connection, if a connect cannot be made an exception will be raised here
+    conn = psycopg2.connect(conn_string)
+    cursor = conn.cursor()
+
+    # compute magnitude
+    mag, alarms = computeMagnitude(asnList, dt ,expId, ip2asn, alarmsCollection)
+    ts = dt+timedelta(seconds=timeWindow/2)
+    for asn, asname in asnList:
+        cursor.execute("INSERT INTO ihr_forwarding (asn_id, timebin, magnitude, resp, label) \
+        VALUES (%s, %s, %s, %s, %s)", (int(asn), ts, mag[asn], 0, "")) 
+    
+    conn.commit()
+
+    # push alarms to the webserver
+    for alarm in alarms:
+        if alarm["asn"] in mag:
+            cursor.execute("INSERT INTO ihr_forwarding_alarms (asn_id, timebin, ip,  \
+                correlation, responsibility, pktdiff, previoushop ) VALUES (%s, %s, %s, \
+                %s, %s, %s, %s)", (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+
+
 
 def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
@@ -349,12 +380,12 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
             resp = corrAbs * (pktDiff/sumPktDiff) 
             data["resp"].append( resp )
             if not ip in ip2asn:
-                ip2asn[ip] = asn_by_addr(ip, db=gi)[0]
+                ip2asn[ip] = int(asn_by_addr(ip, db=gi)[0])
 
             data["asn"].append(ip2asn[ip])
 
             if row["timeBin"] == timeBin and resp > 0.1:
-                alarms.append({"asn": data["asn"][-1][0], "ip": ip, "previousHop": row["ip"], "correlation": row["corr"], "responsibility": resp, "pktDiff": pktDiff})
+                alarms.append({"asn": data["asn"][-1], "ip": ip, "previousHop": row["ip"], "correlation": row["corr"], "responsibility": resp, "pktDiff": pktDiff})
 
     
     df =  pd.DataFrame.from_dict(data)
