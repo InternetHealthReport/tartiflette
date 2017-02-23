@@ -282,7 +282,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         conn.close()
         
     print "Cleaning route change reference." 
-    refRoutes = cleanRef(refRoutes, datetime.utcfromdatetime(currDate))
+    #refRoutes = cleanRef(refRoutes, datetime.utcfromtimestamp(currDate))
 
 
     print "Writing route change reference to file system." 

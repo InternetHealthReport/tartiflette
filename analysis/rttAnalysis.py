@@ -531,10 +531,10 @@ def detectRttChangesMongo(expId=None):
         conn.close()
 
         print "Cleaning rtt change reference." 
-        sampleMediandiff = cleanRef(sampleMediandiff, datetime.utcfromdatetime(currDate))
+        sampleMediandiff = cleanRef(sampleMediandiff, datetime.utcfromtimestamp(currDate))
 
     print "Writing diffRTT reference to file system." 
-    fi = open("saved_references/%s_diffRTT.pickle" % (expId, label), "w")
+    fi = open("saved_references/%s_diffRTT.pickle" % (expId), "w")
     pickle.dump(sampleMediandiff, fi, 2) 
 
 
