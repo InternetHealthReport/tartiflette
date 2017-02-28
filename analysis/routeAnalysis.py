@@ -49,8 +49,6 @@ def sendMail(message):
 
 
 asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
-
-asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
 def asn_by_addr(ip, db=None):
     try:
         m = asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 

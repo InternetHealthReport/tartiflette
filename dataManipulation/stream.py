@@ -35,8 +35,6 @@ def sendMail(message):
     server.quit()
 
 
-asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
-
 def on_result_response(*args):
     """
     Function called every time we receive a new traceroute.
