@@ -7,6 +7,8 @@ import emailConf
 import time
 import datetime 
 import sys
+from email.mime.text import MIMEText
+
 
 class ConnectionError(Exception):
     def __init__(self, value):
@@ -14,27 +16,26 @@ class ConnectionError(Exception):
     def __str__(self):
         return repr(self.value)
 
-
 def sendMail(message):
     """
     Send an email with the given message.
     The destination/source addresses are defined in emailConf.
     """
 
-    msg = textwrap.dedent("""\
-        From: %s 
-        To: %s 
-        Subject: Atlas stream stopped on %s (UTC)! 
-        %s 
-    """ % (emailConf.orig, ",".join(emailConf.dest), datetime.datetime.utcnow(), message))
+    msg = MIMEText(message)
+    msg["Subject"] = "Atlas stream stopped on %s (UTC)!" % datetime.datetime.utcnow()
+    msg["From"] = emailConf.orig 
+    msg["To"] = emailConf.dest 
 
     # Send the mail
     server = smtplib.SMTP(emailConf.server)
     server.starttls()
     server.login(emailConf.username, emailConf.password)
-    server.sendmail(emailConf.orig, emailConf.dest, msg)
+    server.sendmail(emailConf.orig, emailConf.dest, msg.as_string())
     server.quit()
 
+
+asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
 
 def on_result_response(*args):
     """

@@ -23,9 +23,32 @@ import pandas as pd
 import psycopg2
 import random
 import statsmodels.api as sm
+import smtplib
+import emailConf
+from email.mime.text import MIMEText
 
 from bson import objectid
 
+def sendMail(message):
+    """
+    Send an email with the given message.
+    The destination/source addresses are defined in emailConf.
+    """
+
+    msg = MIMEText(message)
+    msg["Subject"] = "Route analysis stopped on %s (UTC)!" % datetime.utcnow()
+    msg["From"] = emailConf.orig 
+    msg["To"] = emailConf.dest 
+
+    # Send the mail
+    server = smtplib.SMTP(emailConf.server)
+    server.starttls()
+    server.login(emailConf.username, emailConf.password)
+    server.sendmail(emailConf.orig, emailConf.dest, msg.as_string())
+    server.quit()
+
+
+asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
 
 asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
 def asn_by_addr(ip, db=None):
@@ -250,7 +273,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
 
 
     # Update results on the webserver
-    if streaming and False:
+    if streaming:
         # update ASN table
         conn_string = "host='romain.iijlab.net' dbname='ihr'"
  
@@ -281,7 +304,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         cursor.close()
         conn.close()
         
-    print "Cleaning route change reference." 
+    #print "Cleaning route change reference." 
     #refRoutes = cleanRef(refRoutes, datetime.utcfromtimestamp(currDate))
 
 
@@ -554,10 +577,17 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
 
 
 if __name__ == "__main__":
-    expId = None
-    if len(sys.argv)>1:
-        if sys.argv[1] != "stream":
-            expId = objectid.ObjectId(sys.argv[1]) 
-        else:
-            expId = "stream"
-    detectRouteChangesMongo(expId)
+    try:
+        expId = None
+        if len(sys.argv)>1:
+            if sys.argv[1] != "stream":
+                expId = objectid.ObjectId(sys.argv[1]) 
+            else:
+                expId = "stream"
+        detectRouteChangesMongo(expId)
+    except Exception as e: 
+        save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
+        exception_fp = open("dump_%s.err" % datetime.datetime.now(), "w")
+        exception_fp.write(save_note) 
+        sendMail(save_note)
+
