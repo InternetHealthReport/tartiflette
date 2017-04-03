@@ -38,7 +38,7 @@ def sendMail(message):
     msg = MIMEText(message)
     msg["Subject"] = "Route analysis stopped on %s (UTC)!" % datetime.utcnow()
     msg["From"] = emailConf.orig 
-    msg["To"] = emailConf.dest 
+    msg["To"] = ",".join(emailConf.dest)
 
     # Send the mail
     server = smtplib.SMTP(emailConf.server)
@@ -585,7 +585,7 @@ if __name__ == "__main__":
         detectRouteChangesMongo(expId)
     except Exception as e: 
         save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
-        exception_fp = open("dump_%s.err" % datetime.datetime.now(), "w")
+        exception_fp = open("dump_%s.err" % datetime.now(), "w")
         exception_fp.write(save_note) 
         sendMail(save_note)
 
