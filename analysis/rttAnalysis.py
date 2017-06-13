@@ -526,8 +526,8 @@ def detectRttChangesMongo(expId=None):
 
         asnList = set(ip2asn.values())
         for asn, asname in asnList:
-            cursor.execute("INSERT INTO ihr_asn (number, name) SELECT %s, %s \
-                WHERE NOT EXISTS ( SELECT number FROM ihr_asn WHERE number= %s);", (int(asn), asname, asn))
+            cursor.execute("INSERT INTO ihr_asn (number, name, tartiflette) VALUES (%s, %s, TRUE) \
+                ON CONFLICT (number) DO UPDATE SET tartiflette = TRUE;", (int(asn), asname))
  
         # push alarms to the webserver
         for alarm in lastAlarms:

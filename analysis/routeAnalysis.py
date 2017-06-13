@@ -278,7 +278,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # get a connection, if a connect cannot be made an exception will be raised here
 	conn = psycopg2.connect(conn_string)
 	cursor = conn.cursor()
-        cursor.execute("SELECT * FROM ihr_asn;")
+        cursor.execute("SELECT * FROM ihr_asn WHERE tartiflette=TRUE;")
         asnList = cursor.fetchall()   
  
         ip2asn = {} 
