@@ -23,8 +23,29 @@ import pandas as pd
 import psycopg2
 import random
 import statsmodels.api as sm
+import smtplib
+import emailConf
+from email.mime.text import MIMEText
 
 from bson import objectid
+
+def sendMail(message):
+    """
+    Send an email with the given message.
+    The destination/source addresses are defined in emailConf.
+    """
+
+    msg = MIMEText(message)
+    msg["Subject"] = "Route analysis stopped on %s (UTC)!" % datetime.utcnow()
+    msg["From"] = emailConf.orig 
+    msg["To"] = ",".join(emailConf.dest)
+
+    # Send the mail
+    server = smtplib.SMTP(emailConf.server)
+    server.starttls()
+    server.login(emailConf.username, emailConf.password)
+    server.sendmail(emailConf.orig, emailConf.dest, msg.as_string())
+    server.quit()
 
 
 asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
@@ -275,12 +296,14 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             if alarm["asn"] in mag:
                 cursor.execute("INSERT INTO ihr_forwarding_alarms (asn_id, timebin, ip,  \
                     correlation, responsibility, pktdiff, previoushop ) VALUES (%s, %s, %s, \
-                    %s, %s, %s, %s)", (int(alarm["asn"]), ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
+                    %s, %s, %s, %s)", (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
 
         conn.commit()
         cursor.close()
         conn.close()
         
+    #print "Cleaning route change reference." 
+    #refRoutes = cleanRef(refRoutes, datetime.utcfromtimestamp(currDate))
 
 
     print "Writing route change reference to file system." 
@@ -291,6 +314,52 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
+
+def cleanRef(refRoutes, currDate, maxSilence=7):
+
+    toRemove = []
+    for ip, nh in refRoutes.iteritems():
+        if nh["stats"]["lastSeen"] < currDate - timedelta(days=maxSilence):
+            toRemove.append(ip)
+
+    for ip in toRemove:
+        del refRoutes[ip]
+
+    print "Removed references for %s ips" % len(toRemove)
+
+    return refRoutes
+
+# TODO remove the following function
+def repare(dt, asnList, ip2asn, expId, alarmsCollection, timeWindow=60*60):
+    # update ASN table
+    conn_string = "host='romain.iijlab.net' dbname='ihr'"
+
+    # get a connection, if a connect cannot be made an exception will be raised here
+    conn = psycopg2.connect(conn_string)
+    cursor = conn.cursor()
+
+    # compute magnitude
+    mag, alarms = computeMagnitude(asnList, dt ,expId, ip2asn, alarmsCollection)
+    ts = dt+timedelta(seconds=timeWindow/2)
+    for asn, asname in asnList:
+        cursor.execute("INSERT INTO ihr_forwarding (asn_id, timebin, magnitude, resp, label) \
+        VALUES (%s, %s, %s, %s, %s)", (int(asn), ts, mag[asn], 0, "")) 
+    
+    conn.commit()
+
+    # push alarms to the webserver
+    for alarm in alarms:
+        if alarm["asn"] in mag:
+            cursor.execute("INSERT INTO ihr_forwarding_alarms (asn_id, timebin, ip,  \
+                correlation, responsibility, pktdiff, previoushop ) VALUES (%s, %s, %s, \
+                %s, %s, %s, %s)", (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+
+
 
 def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
@@ -325,7 +394,10 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
         refDict = dict(row["refNextHops"]) 
         sumPktDiff = 0
         for ip, pkt in obsList:
-            sumPktDiff += np.abs(pkt - refDict[ip])
+            if ip in refDict:
+                sumPktDiff += np.abs(pkt - refDict[ip])
+            else:
+                sumPktDiff += pkt 
 
         for ip, pkt in obsList:
             if ip == "0" or ip == "x":
@@ -333,7 +405,10 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
                     # # TODO how to handle packet loss on the website ?
                 continue
 
-            pktDiff = pkt - refDict[ip] 
+            if ip in refDict:
+                pktDiff = pkt - refDict[ip] 
+            else:
+                pktDiff = pkt
 
             corrAbs = np.abs(row["corr"])
             data["pktDiff"].append(pktDiff)
@@ -343,12 +418,12 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
             resp = corrAbs * (pktDiff/sumPktDiff) 
             data["resp"].append( resp )
             if not ip in ip2asn:
-                ip2asn[ip] = asn_by_addr(ip, db=gi)[0]
+                ip2asn[ip] = int(asn_by_addr(ip, db=gi)[0])
 
             data["asn"].append(ip2asn[ip])
 
             if row["timeBin"] == timeBin and resp > 0.1:
-                alarms.append({"asn": data["asn"][-1][0], "ip": ip, "previousHop": row["ip"], "correlation": row["corr"], "responsibility": resp, "pktDiff": pktDiff})
+                alarms.append({"asn": data["asn"][-1], "ip": ip, "previousHop": row["ip"], "correlation": row["corr"], "responsibility": resp, "pktDiff": pktDiff})
 
     
     df =  pd.DataFrame.from_dict(data)
@@ -500,10 +575,17 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
 
 
 if __name__ == "__main__":
-    expId = None
-    if len(sys.argv)>1:
-        if sys.argv[1] != "stream":
-            expId = objectid.ObjectId(sys.argv[1]) 
-        else:
-            expId = "stream"
-    detectRouteChangesMongo(expId)
+    try:
+        expId = None
+        if len(sys.argv)>1:
+            if sys.argv[1] != "stream":
+                expId = objectid.ObjectId(sys.argv[1]) 
+            else:
+                expId = "stream"
+        detectRouteChangesMongo(expId)
+    except Exception as e: 
+        save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
+        exception_fp = open("dump_%s.err" % datetime.now(), "w")
+        exception_fp.write(save_note) 
+        sendMail(save_note)
+

@@ -10,6 +10,7 @@ batchSize = 15
 # allmsm.extend(builtin4)
 # allmsm.extend(anchoring4)
 # allmsm.extend(extraMsm)
+blacklist=[1789781, 1818204, 2024335, 2024378, 2444159, 2444158, 5051, 5151, 1851699] # spraying msm () are too memory consuming for the forwarding anomaly analysis
 
 allmsm =[2067456, 1043457, 2394115, 1801217, 2398550, 1769991, 2435592, 1851699, 
         2020876, 2339853, 1446417, 3622418, 1698327, 5356561, 4480004, 1698331, 
@@ -47,7 +48,7 @@ allmsm =[2067456, 1043457, 2394115, 1801217, 2398550, 1769991, 2435592, 1851699,
         1042417, 2025970, 3484659, 1042421, 1666038, 1790203, 1878008, 1042425, 
         1612282, 1879037] 
 
-allmsm = list(set(allmsm))
+allmsm = list(set(allmsm) - set(blacklist))
 batches = np.array_split(np.array(allmsm), len(allmsm)/batchSize)
 
 proc = []

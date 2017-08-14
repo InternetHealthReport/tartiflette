@@ -23,11 +23,29 @@ import pandas as pd
 import random
 import re
 import psycopg2
-
-
-# import cProfile
+import smtplib
+import emailConf
+from email.mime.text import MIMEText
 
 from bson import objectid
+
+def sendMail(message):
+    """
+    Send an email with the given message.
+    The destination/source addresses are defined in emailConf.
+    """
+
+    msg = MIMEText(message)
+    msg["Subject"] = "RTT analysis stopped on %s (UTC)!" % datetime.utcnow()
+    msg["From"] = emailConf.orig 
+    msg["To"] = ",".join(emailConf.dest)
+
+    # Send the mail
+    server = smtplib.SMTP(emailConf.server)
+    server.starttls()
+    server.login(emailConf.username, emailConf.password)
+    server.sendmail(emailConf.orig, emailConf.dest, msg.as_string())
+    server.quit()
 
 
 asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
@@ -329,6 +347,22 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
 
     return alarms
 
+
+def cleanRef(ref, currDate, maxSilence=7):
+
+    toRemove = []
+    for ipPair, data in ref.iteritems():
+        if data["lastSeen"] < currDate - timedelta(days=maxSilence):
+            toRemove.append(ipPair)
+
+    for ipPair in toRemove:
+        del ref[ipPair]
+
+    print "Removed references for %s ips" % len(toRemove)
+
+    return ref
+
+
 def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBound",
         historySize=7*24, minPeriods=0):
 
@@ -514,20 +548,28 @@ def detectRttChangesMongo(expId=None):
         cursor.close()
         conn.close()
 
+        print "Cleaning rtt change reference." 
+        sampleMediandiff = cleanRef(sampleMediandiff, datetime.utcfromtimestamp(currDate))
 
-    for ref, label in [(sampleMediandiff, "diffRTT")]:
-        if not ref is None:
-            print "Writing %s reference to file system." % (label)
-            fi = open("saved_references/%s_%s.pickle" % (expId, label), "w")
-            pickle.dump(ref, fi, 2) 
+    print "Writing diffRTT reference to file system." 
+    fi = open("saved_references/%s_diffRTT.pickle" % (expId), "w")
+    pickle.dump(sampleMediandiff, fi, 2) 
+
 
 
 if __name__ == "__main__":
-    expId = None
-    if len(sys.argv)>1:
-	if sys.argv[1] != "stream":
-            expId = objectid.ObjectId(sys.argv[1]) 
-	else:
-            expId = "stream"
-    detectRttChangesMongo(expId)
+    try: 
+        expId = None
+        if len(sys.argv)>1:
+            if sys.argv[1] != "stream":
+                expId = objectid.ObjectId(sys.argv[1]) 
+            else:
+                expId = "stream"
+        detectRttChangesMongo(expId)
+    except Exception as e: 
+        save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
+        exception_fp = open("dump_%s.err" % datetime.now(), "w")
+        exception_fp.write(save_note) 
+        sendMail(save_note)
+
 

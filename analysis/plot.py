@@ -191,8 +191,8 @@ def rttEvolution(res, ips, suffix):
     plt.close()
 
     # fig = plt.figure(figsize=(10,4))
-    fig = plt.figure(figsize=(10,2.5))
-    plt.plot(rttDiff[1], rttDiff[0],"x",label="Raw values")
+    fig = plt.figure(figsize=(20,2.5))
+    plt.plot(rttDiff[1], rttDiff[0],"o",label="Raw values",ms=1)
     plt.grid(True)
     # plt.yscale("log")
     dat = np.array(rttDiff[0])
@@ -208,7 +208,7 @@ def rttEvolution(res, ips, suffix):
     else:
         plt.title("%s - %s" % ips)
     plt.legend( loc="best")
-    plt.ylim([-400,400])
+    plt.ylim([100,300])
     plt.xticks([])
     fig.autofmt_xdate() 
     fig.tight_layout()
