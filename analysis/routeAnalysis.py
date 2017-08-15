@@ -258,14 +258,16 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn, currDate) )
+            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn ) )
 
+        chunks = [params[x:x+100] for x in xrange(0, len(params), 100)]
         #mapResult = map(routeChangeDetection, params)
-        mapResult = pool.map(routeChangeDetection, params)
+        for chunk in chunks:
+            mapResult = pool.imap_unordered(routeChangeDetection, chunk)
 
-        # Update the reference
-        for target, newRef, alarms in mapResult:
-            refRoutes[target] = newRef
+            # Update the reference
+            for target, newRef, alarms in mapResult:
+                refRoutes[target] = newRef
 
             
         if nbRow>0:
@@ -400,7 +402,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
     
     return magnitudes, alarms
 
-def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2asn, currDate) ):
+def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2asn ) ):
 
     collection = db.routeChanges
     alpha = param["alpha"]
@@ -533,7 +535,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
         if len(nextHopsRef) == 0:
             # there should be at least the "stats" and one hop
             toRemove.append(ip0)
-        elif nextHopsRef["stats"]["lastSeen"] < currDate - timedelta(days=7):
+        elif nextHopsRef["stats"]["lastSeen"] < ts - timedelta(days=7):
             toRemove.append(ip0)
 
     for ip in toRemove:
