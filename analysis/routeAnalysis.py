@@ -33,6 +33,7 @@ def sendMail(message):
     """
     Send an email with the given message.
     The destination/source addresses are defined in emailConf.
+    Mainly used to track when something wrong happens.
     """
 
     msg = MIMEText(message)
