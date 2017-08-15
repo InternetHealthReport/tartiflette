@@ -220,7 +220,6 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) - timedelta(hours=1) 
         expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
         expParam["analysisTimeUTC"] = now
-        #TODO remove the 2 following lines: force minASN and entropy threshold
         expParam["minASN"]=3
         expParam["minASNEntropy"]= 0.5
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
@@ -317,52 +316,6 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
-# TODO remove the following function (this is now done in routeChangeDetection 
-def cleanRef(refRoutes, currDate, maxSilence=7):
-
-    toRemove = []
-    for ip, nh in refRoutes.iteritems():
-        if nh["stats"]["lastSeen"] < currDate - timedelta(days=maxSilence):
-            toRemove.append(ip)
-
-    for ip in toRemove:
-        del refRoutes[ip]
-
-    print "Removed references for %s ips" % len(toRemove)
-
-    return refRoutes
-
-# TODO remove the following function
-def repare(dt, asnList, ip2asn, expId, alarmsCollection, timeWindow=60*60):
-    # update ASN table
-    conn_string = "host='romain.iijlab.net' dbname='ihr'"
-
-    # get a connection, if a connect cannot be made an exception will be raised here
-    conn = psycopg2.connect(conn_string)
-    cursor = conn.cursor()
-
-    # compute magnitude
-    mag, alarms = computeMagnitude(asnList, dt ,expId, ip2asn, alarmsCollection)
-    ts = dt+timedelta(seconds=timeWindow/2)
-    for asn, asname in asnList:
-        cursor.execute("INSERT INTO ihr_forwarding (asn_id, timebin, magnitude, resp, label) \
-        VALUES (%s, %s, %s, %s, %s)", (int(asn), ts, mag[asn], 0, "")) 
-    
-    conn.commit()
-
-    # push alarms to the webserver
-    for alarm in alarms:
-        if alarm["asn"] in mag:
-            cursor.execute("INSERT INTO ihr_forwarding_alarms (asn_id, timebin, ip,  \
-                correlation, responsibility, pktdiff, previoushop ) VALUES (%s, %s, %s, \
-                %s, %s, %s, %s)", (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-    
-
-
 
 def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
