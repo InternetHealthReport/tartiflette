@@ -14,6 +14,7 @@ from collections import deque
 from scipy import stats
 import pymongo
 from multiprocessing import Process, Pool
+from multiprocessing import Manager
 import tools
 import cPickle as pickle
 import pygeoip
@@ -183,7 +184,6 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     streaming = False
     nbProcesses = 12
     binMult = 3 # number of bins = binMult*nbProcesses 
-    pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
@@ -210,7 +210,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
                 }
 
         expId = detectionExperiments.insert_one(expParam).inserted_id 
-        refRoutes = defaultdict(routeCountRef)
+        refRoutes = dict()
 
     else:
         # Streaming mode: analyze the last time bin
@@ -233,8 +233,12 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             fi = open("saved_references/%s_%s.pickle" % (expId, "routeChange"), "rb")
             refRoutes = pickle.load(fi) 
         except IOError:
-            refRoutes = defaultdict(routeCountRef)
+            sys.stderr.write("corrupted file!?")
+            refRoutes = dict()
         sys.stderr.write("done!\n")
+
+    refRoutes = Manager().dict(refRoutes)
+    pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     probe2asn = {}
     start = int(calendar.timegm(expParam["start"].timetuple()))
@@ -258,16 +262,14 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn ) )
+            params.append( (newRoutes, expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn ) )
 
-        chunks = [params[x:x+100] for x in xrange(0, len(params), 100)]
         #mapResult = map(routeChangeDetection, params)
-        for chunk in chunks:
-            mapResult = pool.imap_unordered(routeChangeDetection, chunk)
+        mapResult = pool.imap_unordered(routeChangeDetection, params)
 
-            # Update the reference
-            for target, newRef, alarms in mapResult:
-                refRoutes[target] = newRef
+            ## Update the reference
+            #for target, newRef, alarms in mapResult:
+                #refRoutes[target] = newRef
 
             
         if nbRow>0:
@@ -312,7 +314,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
 
     print "Writing route change reference to file system." 
     fi = open("saved_references/%s_routeChange.pickle" % (expId), "w")
-    pickle.dump(refRoutes, fi, 2) 
+    pickle.dump(refRoutes.copy(), fi, 2) 
     
     sys.stderr.write("\n")
     pool.close()
@@ -402,7 +404,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
     
     return magnitudes, alarms
 
-def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2asn ) ):
+def routeChangeDetection( (routes, param, expId, ts, target, probe2asn ) ):
 
     collection = db.routeChanges
     alpha = param["alpha"]
@@ -412,8 +414,13 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
     alarms = []
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
+    rr = refRoutes[target]
     for ip0, nextHops in routes.iteritems(): 
-        nextHopsRef = routesRef[ip0] 
+        if ip0 in rr:
+            nextHopsRef = rr[ip0] 
+        else:
+            nextHopsRef = routeCountRef()
+            rr[ip0] = nextHopsRef
         allHops = set(["0"])
         for key in set(nextHops.keys()).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
             # Make sure we don't count ip that are not observed in both variables
@@ -531,7 +538,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
 
     # Clean the reference data structure:
     toRemove = []
-    for ip0, nextHopsRef in routesRef.iteritems(): 
+    for ip0, nextHopsRef in rr.iteritems(): 
         if len(nextHopsRef) == 0:
             # there should be at least the "stats" and one hop
             toRemove.append(ip0)
@@ -539,15 +546,16 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
             toRemove.append(ip0)
 
     for ip in toRemove:
-        del routesRef[ip] 
+        del rr[ip] 
 
     # Insert all alarms to the database
     if alarms and not collection is None:
         collection.insert_many(alarms)
 
-    print("%s: %s %s" % (target, len(routesRef), len(alarms)))
 
-    return (target, routesRef, alarms)
+    # Update the reference
+    refRoutes[target] = rr
+
 
 
 if __name__ == "__main__":
