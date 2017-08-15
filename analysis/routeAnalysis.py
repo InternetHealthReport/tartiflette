@@ -26,6 +26,7 @@ import statsmodels.api as sm
 import smtplib
 import emailConf
 from email.mime.text import MIMEText
+import traceback
 
 from bson import objectid
 
@@ -257,8 +258,9 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn) )
+            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn, currDate) )
 
+        #mapResult = map(routeChangeDetection, params)
         mapResult = pool.map(routeChangeDetection, params)
 
         # Update the reference
@@ -278,7 +280,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # get a connection, if a connect cannot be made an exception will be raised here
 	conn = psycopg2.connect(conn_string)
 	cursor = conn.cursor()
-        cursor.execute("SELECT * FROM ihr_asn WHERE tartiflette=TRUE;")
+        cursor.execute("SELECT number, name FROM ihr_asn WHERE tartiflette=TRUE;")
         asnList = cursor.fetchall()   
  
         ip2asn = {} 
@@ -314,7 +316,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
-
+# TODO remove the following function (this is now done in routeChangeDetection 
 def cleanRef(refRoutes, currDate, maxSilence=7):
 
     toRemove = []
@@ -444,7 +446,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
     
     return magnitudes, alarms
 
-def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2asn) ):
+def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2asn, currDate) ):
 
     collection = db.routeChanges
     alpha = param["alpha"]
@@ -463,7 +465,7 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
                 allHops.add(key)
         
         reported = False
-        if len(allHops) > 2  : 
+        if True: #len(allHops) > 2  : 
             probes = np.array([p for hop, probeIP in nextHops.iteritems() for p in probeIP])
             hops = np.array([hop for hop, probeIP in nextHops.iteritems() for p in probeIP])
             mask = np.array([True]*len(hops))
@@ -478,6 +480,9 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
                     a = probe2asn[ip]
                 asn[a] += 1
                 asnProbeIdx[a].append(idx)
+
+            if len(asn) < minAsn :
+                continue
                     
             asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
             trimDist = False
@@ -567,9 +572,24 @@ def routeChangeDetection( (routes, routesRef, param, expId, ts, target, probe2as
                     nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
                 nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
 
+
+    # Clean the reference data structure:
+    toRemove = []
+    for ip0, nextHopsRef in routesRef.iteritems(): 
+        if len(nextHopsRef) == 0:
+            # there should be at least the "stats" and one hop
+            toRemove.append(ip0)
+        elif nextHopsRef["stats"]["lastSeen"] < currDate - timedelta(days=7):
+            toRemove.append(ip0)
+
+    for ip in toRemove:
+        del routesRef[ip] 
+
     # Insert all alarms to the database
     if alarms and not collection is None:
         collection.insert_many(alarms)
+
+    print("%s: %s %s" % (target, len(routesRef), len(alarms)))
 
     return (target, routesRef, alarms)
 
@@ -584,7 +604,8 @@ if __name__ == "__main__":
                 expId = "stream"
         detectRouteChangesMongo(expId)
     except Exception as e: 
-        save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
+        tb = traceback.format_exc()
+        save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
         exception_fp = open("dump_%s.err" % datetime.now(), "w")
         exception_fp.write(save_note) 
         sendMail(save_note)
