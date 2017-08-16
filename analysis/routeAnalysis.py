@@ -108,11 +108,11 @@ def readOneTraceroute(trace, routes):
                 else:
                     ip = res["from"]
 
+                nbPrevIps = float(len(prevIps))
                 for prevIp in prevIps:
-                    if ip in listRouter[prevIp]:
-                        listRouter[prevIp][ip].append(probeIp)
-                    else:
-                        listRouter[prevIp][ip] = [probeIp]
+                    if not ip in listRouter[prevIp]:
+                        listRouter[prevIp][ip] = defaultdict(int) 
+                    listRouter[prevIp][ip][probeIp] += 1/nbPrevIps
 
                 currIps.append(ip)
     
@@ -164,11 +164,12 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
         for target, routes in oneProcResult.iteritems():
             for ip0, nextHops in routes.iteritems(): 
                 ip0Counter = mergedRoutes[target][ip0]
-                for ip1, count in nextHops.iteritems():
+                for ip1, probeCounts in nextHops.iteritems():
                     if ip1 in ip0Counter:
-                        ip0Counter[ip1].extend(count)
+                        for probeIp, count in probeCounts.iteritems():
+                            ip0Counter[ip1][probeIp] += count 
                     else:
-                        ip0Counter[ip1] = count 
+                        ip0Counter[ip1] = probeCounts 
 
         nbRow += compRows
         timeSpent = (time.time()-tsS)
@@ -184,11 +185,13 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     streaming = False
     nbProcesses = 12
     binMult = 3 # number of bins = binMult*nbProcesses 
+    pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
     detectionExperiments = db.routeExperiments
     alarmsCollection = db.routeChanges
+    refRoutes=None
 
     if expId == "stream":
         expParam = detectionExperiments.find_one({"stream": True})
@@ -210,7 +213,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
                 }
 
         expId = detectionExperiments.insert_one(expParam).inserted_id 
-        refRoutes = dict()
+        refRoutes = defaultdict(routeCountRef)
 
     else:
         # Streaming mode: analyze the last time bin
@@ -234,11 +237,8 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             refRoutes = pickle.load(fi) 
         except IOError:
             sys.stderr.write("corrupted file!?")
-            refRoutes = dict()
+            refRoutes = defaultdict(routeCountRef)
         sys.stderr.write("done!\n")
-
-    refRoutes = Manager().dict(refRoutes)
-    pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
     probe2asn = {}
     start = int(calendar.timegm(expParam["start"].timetuple()))
@@ -259,18 +259,21 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         routes =  pool.imap_unordered(countRoutes, params)
         routes, nbRow = mergeRoutes(routes, currDate, tsS, nbProcesses*binMult)
 
+        print "size before params: %s" % len(refRoutes)
         # Detect route changes
         params = []
         for target, newRoutes in routes.iteritems():
-            params.append( (newRoutes, expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn ) )
+            params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn ) )
 
-        #mapResult = map(routeChangeDetection, params)
+        print "size after params: %s" % len(refRoutes)
+
         mapResult = pool.imap_unordered(routeChangeDetection, params)
 
-            ## Update the reference
-            #for target, newRef, alarms in mapResult:
-                #refRoutes[target] = newRef
+        # Update the reference
+        for target, newRef in mapResult:
+            refRoutes[target] = newRef
 
+        print "size after analysis: %s" % len(refRoutes)
             
         if nbRow>0:
             nbIteration+=1
@@ -308,17 +311,14 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         cursor.close()
         conn.close()
         
-    #print "Cleaning route change reference." 
-    #refRoutes = cleanRef(refRoutes, datetime.utcfromtimestamp(currDate))
 
-
-    print "Writing route change reference to file system." 
-    fi = open("saved_references/%s_routeChange.pickle" % (expId), "w")
-    pickle.dump(refRoutes.copy(), fi, 2) 
-    
-    sys.stderr.write("\n")
     pool.close()
     pool.join()
+    
+    sys.stderr.write("\n")
+    print "Writing route change reference to file system." 
+    fi = open("saved_references/%s_routeChange.pickle" % (expId), "w")
+    pickle.dump(refRoutes, fi, 2) 
     
 
 def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp", 
@@ -404,7 +404,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
     
     return magnitudes, alarms
 
-def routeChangeDetection( (routes, param, expId, ts, target, probe2asn ) ):
+def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
 
     collection = db.routeChanges
     alpha = param["alpha"]
@@ -414,13 +414,8 @@ def routeChangeDetection( (routes, param, expId, ts, target, probe2asn ) ):
     alarms = []
     gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
-    rr = refRoutes[target]
     for ip0, nextHops in routes.iteritems(): 
-        if ip0 in rr:
-            nextHopsRef = rr[ip0] 
-        else:
-            nextHopsRef = routeCountRef()
-            rr[ip0] = nextHopsRef
+        nextHopsRef = rr[ip0] 
         allHops = set(["0"])
         for key in set(nextHops.keys()).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
             # Make sure we don't count ip that are not observed in both variables
@@ -429,8 +424,9 @@ def routeChangeDetection( (routes, param, expId, ts, target, probe2asn ) ):
         
         reported = False
         if True: #len(allHops) > 2  : 
-            probes = np.array([p for hop, probeIP in nextHops.iteritems() for p in probeIP])
-            hops = np.array([hop for hop, probeIP in nextHops.iteritems() for p in probeIP])
+            # TODO change the following using dict instead of lists ?
+            probes = np.array([p for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() for x in range(int(count))])
+            hops = np.array([hop for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() for x in range(int(count))])
             mask = np.array([True]*len(hops))
             asn = defaultdict(int)
             asnProbeIdx = defaultdict(list)
@@ -535,7 +531,6 @@ def routeChangeDetection( (routes, param, expId, ts, target, probe2asn ) ):
                     nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
                 nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
 
-
     # Clean the reference data structure:
     toRemove = []
     for ip0, nextHopsRef in rr.iteritems(): 
@@ -552,14 +547,10 @@ def routeChangeDetection( (routes, param, expId, ts, target, probe2asn ) ):
     if alarms and not collection is None:
         collection.insert_many(alarms)
 
-
-    # Update the reference
-    refRoutes[target] = rr
-
-
+    return target, rr
 
 if __name__ == "__main__":
-    try:
+    #try:
         expId = None
         if len(sys.argv)>1:
             if sys.argv[1] != "stream":
@@ -567,10 +558,10 @@ if __name__ == "__main__":
             else:
                 expId = "stream"
         detectRouteChangesMongo(expId)
-    except Exception as e: 
-        tb = traceback.format_exc()
-        save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
-        exception_fp = open("dump_%s.err" % datetime.now(), "w")
-        exception_fp.write(save_note) 
-        sendMail(save_note)
+    #except Exception as e: 
+        #tb = traceback.format_exc()
+        #save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
+        #exception_fp = open("dump_%s.err" % datetime.now(), "w")
+        #exception_fp.write(save_note) 
+        #sendMail(save_note)
 

@@ -8,7 +8,7 @@ count = 0
 stat = {}
 msmIds = []
 for msm in measurements:
-    if msm["interval"] <= 1800 and (msm["participant_count"] is None or msm["participant_count"]>100):
+    if msm["interval"] <= 1800 and (msm["participant_count"] is None or msm["participant_count"]>100) and not msm["target_ip"].startswith("184.164.224"):
         # for k,v in msm.
         print(msm)
         msmIds.append(msm["id"])
