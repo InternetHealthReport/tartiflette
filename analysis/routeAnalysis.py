@@ -73,12 +73,8 @@ def routeCountRef():
 
 
 # type needed for child processes
-def ddlistType():
-    return defaultdict(list)
-
-
 def routeCount():
-    return defaultdict(ddlistType)
+    return defaultdict(routeCountRef)
 
 
 def readOneTraceroute(trace, routes):
@@ -423,113 +419,112 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
                 allHops.add(key)
         
         reported = False
-        if True: #len(allHops) > 2  : 
-            # TODO change the following using dict instead of lists ?
-            probes = np.array([p for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() for x in range(int(count))])
-            hops = np.array([hop for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() for x in range(int(count))])
-            mask = np.array([True]*len(hops))
-            asn = defaultdict(int)
-            asnProbeIdx = defaultdict(list)
+        # TODO change the following using dict instead of lists ?
+        probes = np.array([p for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() for x in range(int(count))])
+        hops = np.array([hop for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() for x in range(int(count))])
+        mask = np.array([True]*len(hops))
+        asn = defaultdict(int)
+        asnProbeIdx = defaultdict(list)
 
-            for idx, ip in enumerate(probes):
-                if not ip in probe2asn:
-                    a = asn_by_addr(ip,db=gi)
-                    probe2asn[ip] = a 
-                else:
-                    a = probe2asn[ip]
-                asn[a] += 1
-                asnProbeIdx[a].append(idx)
+        for idx, ip in enumerate(probes):
+            if not ip in probe2asn:
+                a = asn_by_addr(ip,db=gi)
+                probe2asn[ip] = a 
+            else:
+                a = probe2asn[ip]
+            asn[a] += 1
+            asnProbeIdx[a].append(idx)
 
-            if len(asn) < minAsn :
-                continue
-                    
+        if len(asn) < minAsn :
+            continue
+                
+        asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
+        trimDist = False
+    
+        # trim the distribution if needed
+        while asnEntropy < minASNEntropy and len(asn) > minAsn:
+
+            #remove one sample from the most prominent AS
+            maxAsn = max(asn, key=asn.get)
+            remove = random.randrange(0,len(asnProbeIdx[maxAsn]))
+            rmIdx = asnProbeIdx[maxAsn].pop(remove)
+            mask[rmIdx] = False
+            asn[maxAsn] -= 1
+            #remove the AS if we removed all its probes
+            if asn[maxAsn] <= 0:
+                asn.pop(maxAsn, None)
+        
+            # recompute the entropy
             asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
-            trimDist = False
-        
-            # trim the distribution if needed
-            while asnEntropy < minASNEntropy and len(asn) > minAsn:
+            trimDist = True 
 
-                #remove one sample from the most prominent AS
-                maxAsn = max(asn, key=asn.get)
-                remove = random.randrange(0,len(asnProbeIdx[maxAsn]))
-                rmIdx = asnProbeIdx[maxAsn].pop(remove)
-                mask[rmIdx] = False
-                asn[maxAsn] -= 1
-                #remove the AS if we removed all its probes
-                if asn[maxAsn] <= 0:
-                    asn.pop(maxAsn, None)
-            
-                # recompute the entropy
-                asnEntropy = stats.entropy(asn.values())/np.log(len(asn))
-                trimDist = True 
+        if len(asn) < minAsn or asnEntropy < minASNEntropy:
+            continue
 
-            if len(asn) < minAsn or asnEntropy < minASNEntropy:
-                continue
+        # if trimmed then update the sample dist and probes
+        if trimDist:
+            hops = hops[mask]
+            probes = probes[mask]
 
-            # if trimmed then update the sample dist and probes
-            if trimDist:
-                hops = hops[mask]
-                probes = probes[mask]
+        # Refresh allHops list
+        allHops = set(["0"])
+        for key in set(hops).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
+            # Make sure we don't count ip that are not observed in both variables
+            if nextHops[key] or nextHopsRef[key]:
+                allHops.add(key)
+    
+        count = []
+        countRef = []
+        for ip1 in allHops:
+            count.append(np.count_nonzero(hops == ip1))
+            countRef.append(nextHopsRef[ip1])
 
-            # Refresh allHops list
-            allHops = set(["0"])
-            for key in set(hops).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
-                # Make sure we don't count ip that are not observed in both variables
-                if nextHops[key] or nextHopsRef[key]:
-                    allHops.add(key)
-        
-            count = []
-            countRef = []
-            for ip1 in allHops:
-                count.append(np.count_nonzero(hops == ip1))
-                countRef.append(nextHopsRef[ip1])
+        if len(count) > 1 and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= minSeen:
+            corr = np.corrcoef(count,countRef)[0][1]
+            if corr < param["minCorr"]:
+                nbSamples = len(probes)
 
-            if len(count) > 1 and "stats" in nextHopsRef and nextHopsRef["stats"]["nbSeen"] >= minSeen:
-                corr = np.corrcoef(count,countRef)[0][1]
-                if corr < param["minCorr"]:
-                    nbSamples = len(probes)
+                reported = True
+                alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target, "refNextHops": [(k, v) for k,v in nextHopsRef.iteritems()], "obsNextHops": [(k, len(v)) for k, v in nextHops.iteritems()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"]}
 
-                    reported = True
-                    alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target, "refNextHops": [(k, v) for k,v in nextHopsRef.iteritems()], "obsNextHops": [(k, len(v)) for k, v in nextHops.iteritems()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"]}
+                if collection is None:
+                    # Write the result to the standard output
+                    print alarm 
+                else:
+                    alarms.append(alarm)
 
-                    if collection is None:
-                        # Write the result to the standard output
-                        print alarm 
-                    else:
-                        alarms.append(alarm)
+        # Update the reference
+        if not "stats" in nextHopsRef:
+            nextHopsRef["stats"] = {"nbSeen":  0, "firstSeen": ts,
+                    "lastSeen": ts, "nbReported": 0}
+            #for ip1 in allHops:
+                #nextHopsRef[ip1] = []
 
-            # Update the reference
-            if not "stats" in nextHopsRef:
-                nextHopsRef["stats"] = {"nbSeen":  0, "firstSeen": ts,
-                        "lastSeen": ts, "nbReported": 0}
-                #for ip1 in allHops:
+        if reported:
+            nextHopsRef["stats"]["nbReported"] += 1
+
+        nextHopsRef["stats"]["nbSeen"] += 1
+        nextHopsRef["stats"]["lastSeen"] = ts 
+
+        #if nextHopsRef["stats"]["nbSeen"]< minSeen:                 # still in the bootstrap
+            #for ip1 in allHops:
+                #newCount = np.count_nonzero(hops == ip1)
+                #if not ip1 in nextHopsRef:
                     #nextHopsRef[ip1] = []
-
-            if reported:
-                nextHopsRef["stats"]["nbReported"] += 1
-
-            nextHopsRef["stats"]["nbSeen"] += 1
-            nextHopsRef["stats"]["lastSeen"] = ts 
-
-            #if nextHopsRef["stats"]["nbSeen"]< minSeen:                 # still in the bootstrap
-                #for ip1 in allHops:
-                    #newCount = np.count_nonzero(hops == ip1)
-                    #if not ip1 in nextHopsRef:
-                        #nextHopsRef[ip1] = []
-                    #nextHopsRef[ip1].append(newCount)
-            #elif nextHopsRef["stats"]["nbSeen"]== minSeen:              # end of bootstrap
-                #for ip1 in allHops:
-                    #newCount = np.count_nonzero(hops == ip1)
-                    #if not ip1 in nextHopsRef:
-                        #nextHopsRef[ip1] = []
-                    #nextHopsRef[ip1].append(newCount)
-                    #nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
-            #else:
-            for ip1 in allHops:
-                newCount = np.count_nonzero(hops == ip1)
-                if isinstance(nextHopsRef[ip1], list):
-                    nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
-                nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
+                #nextHopsRef[ip1].append(newCount)
+        #elif nextHopsRef["stats"]["nbSeen"]== minSeen:              # end of bootstrap
+            #for ip1 in allHops:
+                #newCount = np.count_nonzero(hops == ip1)
+                #if not ip1 in nextHopsRef:
+                    #nextHopsRef[ip1] = []
+                #nextHopsRef[ip1].append(newCount)
+                #nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
+        #else:
+        for ip1 in allHops:
+            newCount = np.count_nonzero(hops == ip1)
+            if isinstance(nextHopsRef[ip1], list):
+                nextHopsRef[ip1] = float(np.median(nextHopsRef[ip1]))
+            nextHopsRef[ip1] = (1.0-alpha)*nextHopsRef[ip1] + alpha*newCount 
 
     # Clean the reference data structure:
     toRemove = []
@@ -550,7 +545,7 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
     return target, rr
 
 if __name__ == "__main__":
-    #try:
+    try:
         expId = None
         if len(sys.argv)>1:
             if sys.argv[1] != "stream":
@@ -558,10 +553,10 @@ if __name__ == "__main__":
             else:
                 expId = "stream"
         detectRouteChangesMongo(expId)
-    #except Exception as e: 
-        #tb = traceback.format_exc()
-        #save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
-        #exception_fp = open("dump_%s.err" % datetime.now(), "w")
-        #exception_fp.write(save_note) 
-        #sendMail(save_note)
+    except Exception as e: 
+        tb = traceback.format_exc()
+        save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
+        exception_fp = open("dump_%s.err" % datetime.now(), "w")
+        exception_fp.write(save_note) 
+        sendMail(save_note)
 
