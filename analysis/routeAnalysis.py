@@ -89,6 +89,10 @@ def readOneTraceroute(trace, routes):
     listRouter = routes[dstIp]
     prevIps = [probeIp]*3
     currIps = []
+    if "prb_id" in trace:
+        probeId = trace["prb_id"]
+    if "msm_id" in trace:
+        msmId = trace["msm_id"]
 
     for hop in trace["result"]:
         
@@ -108,7 +112,10 @@ def readOneTraceroute(trace, routes):
                 for prevIp in prevIps:
                     if not ip in listRouter[prevIp]:
                         listRouter[prevIp][ip] = defaultdict(int) 
+                        listRouter[prevIp][ip]["msm"] = defaultdict(set)
                     listRouter[prevIp][ip][probeIp] += 1/nbPrevIps
+                    listRouter[prevIp][ip]["msm"][msmId].add(probeId)
+
 
                 currIps.append(ip)
     
@@ -139,7 +146,7 @@ def countRoutes( (af, start, end) ):
     for col in collectionNames:
         collection = db[col]
         cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}} , 
-                projection={"result":1, "from":1, "dst_addr":1} , 
+                projection={"result":1, "from":1, "dst_addr":1, "prb_id":1, "msm_id":1} , 
                 cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 batch_size=int(10e6))
         for trace in cursor: 
@@ -163,7 +170,11 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
                 for ip1, probeCounts in nextHops.iteritems():
                     if ip1 in ip0Counter:
                         for probeIp, count in probeCounts.iteritems():
-                            ip0Counter[ip1][probeIp] += count 
+                            if probeIp == "msm":
+                                for msmId, probes in count.iteritems():
+                                    ip0Counter[ip1]["msm"][msmId].update(probes)
+                            else:
+                                ip0Counter[ip1][probeIp] += count 
                     else:
                         ip0Counter[ip1] = probeCounts 
 
@@ -301,7 +312,15 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             if alarm["asn"] in mag:
                 cursor.execute("INSERT INTO ihr_forwarding_alarms (asn_id, timebin, ip,  \
                     correlation, responsibility, pktdiff, previoushop ) VALUES (%s, %s, %s, \
-                    %s, %s, %s, %s)", (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
+                    %s, %s, %s, %s) RETURNING id", (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
+
+                # Push measurement and probes ID corresponding to this alarm
+                alarmid = cursor.fetchone()[0]
+                for msmid, probes in alarm["msmId"].iteritems():
+                    if not msmid is None:
+                        for probeid in probes:
+                            cursor.execute("INSERT INTO ihr_forwarding_alarms_msms(alarm_id, msmid, probeid) \
+                                   VALUES (%s, %s, %s)", (alarmid, msmid, probeid))
 
         conn.commit()
         cursor.close()
@@ -337,6 +356,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
             "ip",
             "nbSamples",
             "corr",
+            "msmId",
         ],
         cursor_type=pymongo.cursor.CursorType.EXHAUST,
         batch_size=int(10e6))
@@ -379,7 +399,7 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
             data["asn"].append(ip2asn[ip])
 
             if row["timeBin"] == timeBin and resp > 0.1:
-                alarms.append({"asn": data["asn"][-1], "ip": ip, "previousHop": row["ip"], "correlation": row["corr"], "responsibility": resp, "pktDiff": pktDiff})
+                alarms.append({"asn": data["asn"][-1], "ip": ip, "previousHop": row["ip"], "correlation": row["corr"], "responsibility": resp, "pktDiff": pktDiff, "msmId": row["msmId"][ip.replace(".","_")]})
 
     
     df =  pd.DataFrame.from_dict(data)
@@ -420,11 +440,12 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
         
         reported = False
         # TODO change the following using dict instead of lists ?
-        probes = np.array([p for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() for x in range(int(count))])
-        hops = np.array([hop for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() for x in range(int(count))])
+        probes = np.array([p for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() if isinstance(count, float) for x in range(int(count))])
+        hops = np.array([hop for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() if isinstance(count, float) for x in range(int(count))])
         mask = np.array([True]*len(hops))
         asn = defaultdict(int)
         asnProbeIdx = defaultdict(list)
+
 
         for idx, ip in enumerate(probes):
             if not ip in probe2asn:
@@ -485,7 +506,8 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
                 nbSamples = len(probes)
 
                 reported = True
-                alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target, "refNextHops": [(k, v) for k,v in nextHopsRef.iteritems()], "obsNextHops": [(k, len(v)) for k, v in nextHops.iteritems()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"]}
+                msmIds = {hop.replace(".","_"):{str(msmid):list(probes)} for hop in nextHops.iterkeys() if "msm" in nextHops[hop] for msmid, probes in nextHops[hop]["msm"].iteritems()}
+                alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target, "refNextHops": [(k, v) for k,v in nextHopsRef.iteritems()], "obsNextHops": [(k, np.sum([x for x in v.values() if isinstance(x, float)])) for k, v in nextHops.iteritems()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"], "msmId": msmIds}
 
                 if collection is None:
                     # Write the result to the standard output
@@ -545,6 +567,7 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
     return target, rr
 
 if __name__ == "__main__":
+    sys.stderr.write("Started at %s\n" % datetime.now())
     try:
         expId = None
         if len(sys.argv)>1:
@@ -559,4 +582,6 @@ if __name__ == "__main__":
         exception_fp = open("dump_%s.err" % datetime.now(), "w")
         exception_fp.write(save_note) 
         sendMail(save_note)
+
+    sys.stderr.write("Ended at %s\n" % datetime.now())
 

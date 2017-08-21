@@ -26,6 +26,7 @@ import psycopg2
 import smtplib
 import emailConf
 from email.mime.text import MIMEText
+import traceback
 
 from bson import objectid
 
@@ -68,13 +69,16 @@ def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
     if trace is None or "error" in trace["result"][0] or "err" in trace["result"][0]["result"]:
         return diffRtt
 
-    # probeId = "probe_%s"  % trace["prb_id"]
     probeIp = trace["from"]
+    probeId = None
+    msmId = None
+    if "prb_id" in trace:
+        probeId = trace["prb_id"]
+    if "msm_id" in trace:
+        msmId = trace["msm_id"]
     prevRttMed = {}
 
     for hopNb, hop in enumerate(trace["result"]):
-        # print "i=%s  and hop=%s" % (hopNb, hop)
-
         try:
             # TODO: clean that workaround results containing no IP, e.g.:
             # {u'result': [{u'x': u'*'}, {u'x': u'*'}, {u'x': u'*'}], u'hop': 6}, 
@@ -104,14 +108,16 @@ def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
 
                             # data for (ip1, ip2) and (ip2, ip1) are put
                             # together in mergeRttResults
-                            if (ip1, ip2) in diffRtt:
-                                i = diffRtt[(ip1,ip2)]
-                                i["rtt"].append(rttAgg-pRttAgg)
-                                i["probe"].append(probeIp)
-                            else:
-                                diffRtt[(ip1,ip2)] = {"rtt": [rttAgg-pRttAgg],
-                                                        "probe": [probeIp]}
+                            if not (ip1, ip2) in diffRtt:
+                                diffRtt[(ip1,ip2)] = {"rtt": [],
+                                                        "probe": [],
+                                                        "msmId": defaultdict(set)
+                                                        }
 
+                            i = diffRtt[(ip1,ip2)]
+                            i["rtt"].append(rttAgg-pRttAgg)
+                            i["probe"].append(probeIp)
+                            i["msmId"][msmId].add(probeId)
         finally:
             prevRttMed = rttMed
             # TODO we miss 2 inferred links if a router never replies
@@ -126,14 +132,8 @@ db = None
 def processInit():
     global db
     client = pymongo.MongoClient("mongodb-iijlab",connect=True)
-    # client = pymongo.MongoClient("10.206.116.235",connect=True)
     db = client.atlas
 
-# def computeRtt( (start, end) ):
-    # results = [None]
-    # cProfile.runctx("results[0] = computeRtt2( (start, end) )", globals(), locals())
-    # # results = computeRtt2( (start, end) )
-    # return results[0]
 
 def computeRtt( (af, start, end, skip, limit, prefixes) ):
     """Read traceroutes from a cursor. Used for multi-processing.
@@ -150,14 +150,14 @@ def computeRtt( (af, start, end, skip, limit, prefixes) ):
         collection = db[col]
         if prefixes is None:
             cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end} } , 
-                projection={"result":1, "from":1} , 
+                projection={"result":1, "from":1, "prb_id":1, "msm_id":1} , 
                 skip = skip,
                 limit = limit,
                 # cursor_type=pymongo.cursor.CursorType.EXHAUST,
                 batch_size=int(10e6))
         else:
             cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}, "result.result.from": prefixes } , 
-                projection={"result":1, "from":1} , 
+                projection={"result":1, "from":1, "prb_id":1, "msm_id":1} , 
                 skip = skip,
                 limit = limit,
                 # cursor_type=pymongo.cursor.CursorType.EXHAUST,
@@ -187,6 +187,8 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
                         inf = diffRtt[ipPair]
                         inf["rtt"].extend(v["rtt"])
                         inf["probe"].extend(v["probe"])
+                        for msmId, probes in v["msmId"].iteritems():
+                            inf["msmId"][msmId].update(probes)
                     else:
                         diffRtt[ipPair] = v
 
@@ -294,12 +296,13 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
                         deviation = diffMed / (ref["high"]-ref["mean"])
                         devBound = diff / (ref["high"]-ref["mean"])
 
+                    nosetMsmId = {str(k): list(v) for k, v in data["msmId"].iteritems()}
                     alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
                             "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
                             "median": med, "nbSamples": n, "nbProbes": nbProbes, "deviation": deviation,
                             "diff": diff, "expId": expId, "diffMed": diffMed, "samplePerASN": list(asn),
                             "nbASN": len(asn), "asnEntropy": asnEntropy, "nbSeen": ref["nbSeen"],
-                            "devBound": devBound, "trimDist": trimDist}
+                            "devBound": devBound, "trimDist": trimDist, "msmId": nosetMsmId}
 
                     reported = True
 
@@ -539,15 +542,25 @@ def detectRttChangesMongo(expId=None):
         for alarm in lastAlarms:
             ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
-                cursor.execute("INSERT INTO ihr_congestion_alarms (asn_id, timebin, ip, link, \
+                cursor.execute("INSERT INTO ihr_delay_alarms (asn_id, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
-                        %s, %s, %s, %s, %s)", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
+                        %s, %s, %s, %s, %s) RETURNING id", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
                         alarm["median"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"]))
+
+
+                # Push measurement and probes ID corresponding to this alarm
+                alarmid = cursor.fetchone()[0]
+                for msmid, probes in alarm["msmId"].iteritems():
+                    if not msmid is None:
+                        for probeid in probes:
+                            cursor.execute("INSERT INTO ihr_delay_alarms_msms(alarm_id, msmid, probeid) \
+                                       VALUES (%s, %s, %s)", (alarmid, msmid, probeid))
+
 
         # compute magnitude
         mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId, alarmsCollection )
         for asn, asname in asnList:
-            cursor.execute("INSERT INTO ihr_congestion (asn_id, timebin, magnitude, deviation, label) \
+            cursor.execute("INSERT INTO ihr_delay (asn_id, timebin, magnitude, deviation, label) \
             VALUES (%s, %s, %s, %s, %s)", (asn, expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn], 0, "")) 
 
         conn.commit()
@@ -564,6 +577,7 @@ def detectRttChangesMongo(expId=None):
 
 
 if __name__ == "__main__":
+    sys.stderr.write("Started at %s\n" % datetime.now())
     try: 
         expId = None
         if len(sys.argv)>1:
@@ -573,9 +587,11 @@ if __name__ == "__main__":
                 expId = "stream"
         detectRttChangesMongo(expId)
     except Exception as e: 
-        save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
+        tb = traceback.format_exc()
+        save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
         exception_fp = open("dump_%s.err" % datetime.now(), "w")
         exception_fp.write(save_note) 
         sendMail(save_note)
 
+    sys.stderr.write("Ended at %s\n" % datetime.now())
 
