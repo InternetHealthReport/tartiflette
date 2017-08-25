@@ -180,7 +180,7 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
         nbRow += compRows
         timeSpent = (time.time()-tsS)
-        sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+        sys.stdout.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
             "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
 
     return mergedRoutes, nbRow
@@ -238,21 +238,21 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
             print resUpdate
             return
 
-        sys.stderr.write("Loading previous reference...")
+        sys.stdout.write("Loading previous reference...")
         try:
             fi = open("saved_references/%s_%s.pickle" % (expId, "routeChange"), "rb")
             refRoutes = pickle.load(fi) 
         except IOError:
-            sys.stderr.write("corrupted file!?")
+            sys.stdout.write("corrupted file!?")
             refRoutes = defaultdict(routeCountRef)
-        sys.stderr.write("done!\n")
+        sys.stdout.write("done!\n")
 
     probe2asn = {}
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
     nbIteration = 0
 
-    sys.stderr.write("Route analysis:\n")
+    sys.stdout.write("Route analysis:\n")
     for currDate in range(start,end,int(expParam["timeWindow"])):
         tsS = time.time()
 
@@ -330,7 +330,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
-    sys.stderr.write("\n")
+    sys.stdout.write("\n")
     print "Writing route change reference to file system." 
     fi = open("saved_references/%s_routeChange.pickle" % (expId), "w")
     pickle.dump(refRoutes, fi, 2) 
@@ -567,7 +567,7 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
     return target, rr
 
 if __name__ == "__main__":
-    sys.stderr.write("Started at %s\n" % datetime.now())
+    sys.stdout.write("Started at %s\n" % datetime.now())
     try:
         expId = None
         if len(sys.argv)>1:
@@ -583,5 +583,5 @@ if __name__ == "__main__":
         exception_fp.write(save_note) 
         sendMail(save_note)
 
-    sys.stderr.write("Ended at %s\n" % datetime.now())
+    sys.stdout.write("Ended at %s\n" % datetime.now())
 

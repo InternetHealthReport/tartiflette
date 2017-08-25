@@ -195,10 +195,10 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
             nbRow += compRows
             timeSpent = (time.time()-tsS)
             if nbBins>1:
-                sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+                sys.stdout.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
                 "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
             else:
-                sys.stderr.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+                sys.stdout.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
                 "#"*(30*i/(nbBins)), "-"*(30*(nbBins-i)/(nbBins)), timeSpent, float(nbRow)/timeSpent))
 
         return diffRtt, nbRow
@@ -463,14 +463,14 @@ def detectRttChangesMongo(expId=None):
             print resUpdate
             return
 
-        sys.stderr.write("Loading previous reference...")
+        sys.stdout.write("Loading previous reference...")
         try:
             fi = open("saved_references/%s_%s.pickle" % (expId, "diffRTT"), "rb")
             sampleMediandiff = pickle.load(fi) 
         except IOError:
             sampleMediandiff = {}
 
-        sys.stderr.write("done!\n")
+        sys.stdout.write("done!\n")
 
     if not expParam["prefixes"] is None:
         expParam["prefixes"] = re.compile(expParam["prefixes"])
@@ -484,7 +484,7 @@ def detectRttChangesMongo(expId=None):
     end = int(calendar.timegm(expParam["end"].timetuple()))
 
     for currDate in range(start,end,int(expParam["timeWindow"])):
-        sys.stderr.write("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
+        sys.stdout.write("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
         tsS = time.time()
 
         # Get distributions for the current time bin
@@ -513,7 +513,7 @@ def detectRttChangesMongo(expId=None):
                     datetime.utcfromtimestamp(currDate), probe2asn, gi, alarmsCollection, streaming, ip2asn)
 
         timeSpent = (time.time()-tsS)
-        sys.stderr.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
+        sys.stdout.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
     
     pool.close()
     pool.join()
@@ -577,7 +577,7 @@ def detectRttChangesMongo(expId=None):
 
 
 if __name__ == "__main__":
-    sys.stderr.write("Started at %s\n" % datetime.now())
+    sys.stdout.write("Started at %s\n" % datetime.now())
     try: 
         expId = None
         if len(sys.argv)>1:
@@ -593,5 +593,5 @@ if __name__ == "__main__":
         exception_fp.write(save_note) 
         sendMail(save_note)
 
-    sys.stderr.write("Ended at %s\n" % datetime.now())
+    sys.stdout.write("Ended at %s\n" % datetime.now())
 
