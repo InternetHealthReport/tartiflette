@@ -533,7 +533,7 @@ def detectRttChangesMongo(expId=None):
             #    ON CONFLICT (number) DO UPDATE SET tartiflette = TRUE;", (int(asn), asname, True))
             cursor.execute("""do $$
             begin 
-                  insert into ihr_asn(number, name, tartiflette, disco) values(%s, %s, TRUE, FALSE);
+                  insert into ihr_asn(number, name, tartiflette, disco, ashash) values(%s, %s, TRUE, FALSE, FALSE);
               exception when unique_violation then
                 update ihr_asn set tartiflette = TRUE where number = %s;
             end $$;""", (asn, asname, asn))
