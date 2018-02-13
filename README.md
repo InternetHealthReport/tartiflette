@@ -37,6 +37,17 @@ switched to db atlas
 
 ```
 
+### Importing data
+An easy way to import data is to download a traceroute daily archive from RIPE (http://ftp.ripe.net/atlas_data/) and import it with mongoimport: 
+```
+bzcat	traceroute-v4-builtin-2018-02-11.txt.bz2 | mongoimport --db atlas --collection traceroute
+```
+
+or if you are interested only in cetain measurements:
+```
+bzcat	traceroute-v4-builtin-2018-02-11.txt.bz2 | grep -f scripts/msmIds.txt | mongoimport --db atlas --collection traceroute
+```
+
 ## Running the analysis
 There is two scripts for the analysis, rttAnalysis.py and routeAnalysis.py.
 rttAnalysis.py monitors delays and reports abnormal delay changes. routeAnalysis.py monitors packets routes and reports forwarding anomalies.
