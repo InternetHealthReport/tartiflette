@@ -31,6 +31,9 @@ import traceback
 
 from bson import objectid
 
+sys.path.append("../lib/ip2asn/")
+import ip2asn 
+
 def sendMail(message):
     """
     Send an email with the given message.
@@ -125,11 +128,14 @@ def readOneTraceroute(trace, routes):
 
 ######## used by child processes
 db = None
+i2a = None
 
 def processInit():
     global db
+    global i2a
     client = pymongo.MongoClient("mongodb-iijlab",connect=True)
     db = client.atlas
+    i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle", "../lib/ixs_201802.jsonl")
 
 
 def countRoutes( (af, start, end) ):
@@ -190,7 +196,8 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO config file implementation
 
     streaming = False
-    nbProcesses = 12
+    replay = False
+    nbProcesses = 18
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
 
@@ -227,8 +234,12 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         streaming = True
         now = datetime.now(timezone("UTC"))  
         expParam = detectionExperiments.find_one({"_id": expId})
-        expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) - timedelta(hours=1) 
-        expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
+        if replay:
+            expParam["start"]= expParam["end"]
+            expParam["end"]= expParam["start"]+timedelta(hours=1)
+        else:
+            expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
+            expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
         expParam["analysisTimeUTC"] = now
         expParam["minASN"]=3
         expParam["minASNEntropy"]= 0.5
@@ -288,8 +299,9 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
 
     # Update results on the webserver
     if streaming:
+        i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle", "../lib/ixs_201802.jsonl")
         # update ASN table
-        conn_string = "host='romain.iijlab.net' dbname='ihr'"
+        conn_string = "host='psqlserver' dbname='ihr'"
  
         # get a connection, if a connect cannot be made an exception will be raised here
 	conn = psycopg2.connect(conn_string)
@@ -297,9 +309,9 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         cursor.execute("SELECT number, name FROM ihr_asn WHERE tartiflette=TRUE;")
         asnList = cursor.fetchall()   
  
-        ip2asn = {} 
+        probeip2asn = {} 
         # compute magnitude
-        mag, alarms = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId, ip2asn, alarmsCollection)
+        mag, alarms = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId, probeip2asn, alarmsCollection, i2a)
         for asn, asname in asnList:
             cursor.execute("INSERT INTO ihr_forwarding (asn_id, timebin, magnitude, resp, label) \
             VALUES (%s, %s, %s, %s, %s)", (int(asn), expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn], 0, "")) 
@@ -336,7 +348,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pickle.dump(refRoutes, fi, 2) 
     
 
-def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp", 
+def computeMagnitude(asnList, timeBin, expId, probeip2asn, collection, i2a, metric="resp", 
         tau=5, historySize=7*24, minPeriods=0, corrThresh=-0.25):
 
     starttime = timeBin-timedelta(hours=historySize)
@@ -362,10 +374,9 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
         batch_size=int(10e6))
     
     data = {"timeBin":[],  "router":[], "ip": [], "pktDiff": [], "resp": [], "asn": []} 
-    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
     for i, row in enumerate(cursor):
-        print "%dk \r" % (i/1000), 
+        print "\r %dk" % (i/1000), 
         obsList = row["obsNextHops"] 
         refDict = dict(row["refNextHops"]) 
         sumPktDiff = 0
@@ -393,10 +404,10 @@ def computeMagnitude(asnList, timeBin, expId, ip2asn, collection, metric="resp",
             data["ip"].append(ip)
             resp = corrAbs * (pktDiff/sumPktDiff) 
             data["resp"].append( resp )
-            if not ip in ip2asn:
-                ip2asn[ip] = int(asn_by_addr(ip, db=gi)[0])
+            if not ip in probeip2asn:
+                probeip2asn[ip] = int(i2a.ip2asn(ip))
 
-            data["asn"].append(ip2asn[ip])
+            data["asn"].append(probeip2asn[ip])
 
             if row["timeBin"] == timeBin and resp > 0.1:
                 alarms.append({"asn": data["asn"][-1], "ip": ip, "previousHop": row["ip"], "correlation": row["corr"], "responsibility": resp, "pktDiff": pktDiff, "msmId": row["msmId"][ip.replace(".","_")]})
@@ -428,7 +439,6 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
     minASNEntropy= param["minASNEntropy"]
     minSeen = param["minSeen"]
     alarms = []
-    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
     for ip0, nextHops in routes.iteritems(): 
         nextHopsRef = rr[ip0] 
@@ -449,7 +459,7 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
 
         for idx, ip in enumerate(probes):
             if not ip in probe2asn:
-                a = asn_by_addr(ip,db=gi)
+                a = i2a.ip2asn(ip)
                 probe2asn[ip] = a 
             else:
                 a = probe2asn[ip]

@@ -30,6 +30,9 @@ import traceback
 
 from bson import objectid
 
+sys.path.append("../lib/ip2asn/")
+import ip2asn 
+
 def sendMail(message):
     """
     Send an email with the given message.
@@ -50,15 +53,15 @@ def sendMail(message):
 
 
 asn_regex = re.compile("^AS([0-9]*)\s(.*)$")
-def asn_by_addr(ip, db=None):
-    try:
-        m = asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 
-        if m is None:
-            return ("0", "Unk")
-        else:
-            return m.groups() 
-    except socket.error:
-        return ("0", "Unk")
+#def asn_by_addr(ip, db=None):
+    #try:
+        #m = asn_regex.match(unicode(db.asn_by_addr(ip)).encode("ascii", "ignore")) 
+        #if m is None:
+            #return ("0", "Unk")
+        #else:
+            #return m.groups() 
+    #except socket.error:
+        #return ("0", "Unk")
 
 
 def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
@@ -204,8 +207,8 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
         return diffRtt, nbRow
 
 
-def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2asn, gi,
-    collection=None, streaming=False, ip2asn=None):
+def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2asn, i2a,
+    collection=None, streaming=False, probeip2asn=None):
 
     if sampleDistributions is None:
         return
@@ -228,7 +231,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
 
         for idx, ip in enumerate(data["probe"]):
             if not ip in probe2asn:
-                a = asn_by_addr(ip,db=gi)
+                a = i2a.ip2asn(ip)
                 probe2asn[ip] = a 
             else:
                 a = probe2asn[ip]
@@ -281,8 +284,8 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
             if ref["nbSeen"] >= minSeen:
                 if streaming:
                     for ip in ipPair:
-                        if not ip in ip2asn:
-                            ip2asn[ip] = asn_by_addr(ip, db=gi)
+                        if not ip in probeip2asn:
+                            probeip2asn[ip] = i2a.ip2asn(ip)
 
                 if (ref["high"] < currLow or ref["low"] > currHi):
                     if med < ref["mean"]:
@@ -392,13 +395,13 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
 
     if "asn" not in df.columns:
         # find ASN for each ip
-        ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
-        fct = functools.partial(asn_by_addr, db=ga)
+        i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle", "../lib/ixs_201802.jsonl")
+        fct = functools.partial(i2a.ip2asn)
         sTmp = df["ipPair"].apply(fct).apply(pd.Series)
         df["asn"] = sTmp[0]
     
     magnitudes = {}
-    for asn, asname in asnList: 
+    for asn in asnList: 
 
         dfb = pd.DataFrame({u'devBound':0.0, u'timeBin':starttime, u'asn':asn,}, index=[starttime])
         dfe = pd.DataFrame({u'devBound':0.0, u'timeBin':endtime, u'asn':asn}, index=[endtime])
@@ -416,6 +419,7 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
 def detectRttChangesMongo(expId=None):
 
     streaming = False
+    replay = False
     nbProcesses = 12 
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
@@ -453,9 +457,14 @@ def detectRttChangesMongo(expId=None):
         # streaming mode: analyze what happened in the last time bin
         streaming = True
         now = datetime.now(timezone("UTC"))  
+            
         expParam = detectionExperiments.find_one({"_id": expId})
-        expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
-        expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
+        if replay:
+            expParam["start"]= expParam["end"]
+            expParam["end"]= expParam["start"]+timedelta(hours=1)
+        else:
+            expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
+            expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
         expParam["analysisTimeUTC"] = now
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
@@ -476,9 +485,9 @@ def detectRttChangesMongo(expId=None):
         expParam["prefixes"] = re.compile(expParam["prefixes"])
 
     probe2asn = {}
-    ip2asn = {}
+    probeip2asn = {}
     lastAlarms = []
-    gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
+    i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle", "../lib/ixs_201802.jsonl")
 
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
@@ -510,7 +519,7 @@ def detectRttChangesMongo(expId=None):
 
         # Detect oulier values
         lastAlarms = outlierDetection(diffRtt, sampleMediandiff, expParam, expId, 
-                    datetime.utcfromtimestamp(currDate), probe2asn, gi, alarmsCollection, streaming, ip2asn)
+                    datetime.utcfromtimestamp(currDate), probe2asn, i2a, alarmsCollection, streaming, probeip2asn)
 
         timeSpent = (time.time()-tsS)
         sys.stdout.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
@@ -521,22 +530,26 @@ def detectRttChangesMongo(expId=None):
     # Update results on the webserver
     if streaming:
         # update ASN table
-        conn_string = "host='romain.iijlab.net' dbname='ihr'"
+        conn_string = "host='psqlserver' dbname='ihr'"
  
         # get a connection, if a connect cannot be made an exception will be raised here
 	conn = psycopg2.connect(conn_string)
 	cursor = conn.cursor()
 
-        asnList = set(ip2asn.values())
-        for asn, asname in asnList:
+        asnList = set(probeip2asn.values())
+        cursor.execute("SELECT number FROM ihr_asn WHERE tartiflette=TRUE")
+        registeredAsn = set([x[0] for x in cursor.fetchall()])
+        for asn in asnList:
             #cursor.execute("INSERT INTO ihr_asn (number, name, tartiflette) VALUES (%s, %s, %s) \
             #    ON CONFLICT (number) DO UPDATE SET tartiflette = TRUE;", (int(asn), asname, True))
-            cursor.execute("""do $$
-            begin 
-                  insert into ihr_asn(number, name, tartiflette, disco, ashash) values(%s, %s, TRUE, FALSE, FALSE);
-              exception when unique_violation then
-                update ihr_asn set tartiflette = TRUE where number = %s;
-            end $$;""", (asn, asname, asn))
+            asname = i2a.asn2name(asn)
+            if int(asn) not in registeredAsn:
+                cursor.execute("""do $$
+                begin 
+                      insert into ihr_asn(number, name, tartiflette, disco, ashash) values(%s, %s, TRUE, FALSE, FALSE);
+                  exception when unique_violation then
+                    update ihr_asn set tartiflette = TRUE where number = %s;
+                end $$;""", (asn, asname, asn))
  
         # push alarms to the webserver
         for alarm in lastAlarms:
@@ -544,7 +557,7 @@ def detectRttChangesMongo(expId=None):
             for ip in alarm["ipPair"]:
                 cursor.execute("INSERT INTO ihr_delay_alarms (asn_id, timebin, ip, link, \
                         medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
-                        %s, %s, %s, %s, %s) RETURNING id", (ip2asn[ip][0], ts, ip, alarm["ipPair"],
+                        %s, %s, %s, %s, %s) RETURNING id", (probeip2asn[ip], ts, ip, alarm["ipPair"],
                         alarm["median"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"]))
 
 
@@ -559,7 +572,7 @@ def detectRttChangesMongo(expId=None):
 
         # compute magnitude
         mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId, alarmsCollection )
-        for asn, asname in asnList:
+        for asn in asnList:
             cursor.execute("INSERT INTO ihr_delay (asn_id, timebin, magnitude, deviation, label) \
             VALUES (%s, %s, %s, %s, %s)", (asn, expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn], 0, "")) 
 
