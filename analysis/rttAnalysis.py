@@ -23,9 +23,12 @@ import pandas as pd
 import random
 import re
 import psycopg2
-import smtplib
-import emailConf
-from email.mime.text import MIMEText
+try:
+    import smtplib
+    from email.mime.text import MIMEText
+    import emailConf
+except ImportError:
+    pass
 import traceback
 
 from bson import objectid
@@ -604,7 +607,8 @@ if __name__ == "__main__":
         save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
         exception_fp = open("dump_%s.err" % datetime.now(), "w")
         exception_fp.write(save_note) 
-        sendMail(save_note)
+        if emailConf.dest:
+            sendMail(save_note)
 
     sys.stdout.write("Ended at %s\n" % datetime.now())
 
