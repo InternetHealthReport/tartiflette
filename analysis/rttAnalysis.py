@@ -393,7 +393,7 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
         ])
 
     df =  pd.DataFrame(list(cursor))
-    df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+    df["timeBin"] = pd.to_datetime(df["timeBin"])
     df.set_index("timeBin")
 
     if "asn" not in df.columns:

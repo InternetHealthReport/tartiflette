@@ -417,7 +417,7 @@ def computeMagnitude(asnList, timeBin, expId, probeip2asn, collection, i2a, metr
 
     
     df =  pd.DataFrame.from_dict(data)
-    df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
+    df["timeBin"] = pd.to_datetime(df["timeBin"])
     df.set_index("timeBin")
     
     magnitudes = {}
