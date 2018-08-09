@@ -9,6 +9,7 @@ Our results with the RIPE Atlas traceroute data is available here: http://romain
 - pymongo
 - pygeoip
 - statsmodels
+- ip2asn (https://github.com/romain-fontugne/ip2asn)
 
 You also need a mongodb server. (see below)
 This product includes GeoLite data created by MaxMind, available from http://www.maxmind.com
