@@ -23,7 +23,7 @@ def migrate_ids(alarm_id, cursor, table_name):
 if __name__ == "__main__":
 
     table_name = "ihr_delay_alarms"
-    conn_string = "host='psqlserver' dbname='ihr'"
+    conn_string = "dbname='ihr'"
 
     conn = psycopg2.connect(conn_string)
     cur2 = conn.cursor()
@@ -38,5 +38,7 @@ if __name__ == "__main__":
         migrate_ids(row[0], cur2, table_name)
         bar.next()
 
+    conn.commit()
+    conn.close()
     bar.finish()
 
