@@ -22,6 +22,7 @@ import socket
 import re
 import pandas as pd
 import psycopg2
+import psycopg2.extras
 import random
 import statsmodels.api as sm
 try:
@@ -326,8 +327,10 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         for alarm in alarms:
             if alarm["asn"] in mag:
                 cursor.execute("INSERT INTO ihr_forwarding_alarms (asn_id, timebin, ip,  \
-                    correlation, responsibility, pktdiff, previoushop ) VALUES (%s, %s, %s, \
-                    %s, %s, %s, %s) RETURNING id", (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], alarm["pktDiff"], alarm["previousHop"]))
+                    correlation, responsibility, pktdiff, previoushop, msm_prb_ids ) VALUES (%s, %s, %s, \
+                    %s, %s, %s, %s, %s) RETURNING id", 
+                    (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], 
+                        alarm["pktDiff"], alarm["previousHop"], psycopg2.extras.Json(alarm["msmId"])))
 
                 # Push measurement and probes ID corresponding to this alarm
                 alarmid = cursor.fetchone()[0]

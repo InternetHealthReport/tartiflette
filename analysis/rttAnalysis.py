@@ -22,7 +22,10 @@ import functools
 import pandas as pd
 import random
 import re
+import json
 import psycopg2
+import psycopg2.extras
+
 try:
     import smtplib
     from email.mime.text import MIMEText
@@ -559,9 +562,9 @@ def detectRttChangesMongo(expId=None):
             ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
                 cursor.execute("INSERT INTO ihr_delay_alarms (asn_id, timebin, ip, link, \
-                        medianrtt, nbprobes, diffmedian, deviation) VALUES (%s, %s, %s, \
-                        %s, %s, %s, %s, %s) RETURNING id", (probeip2asn[ip], ts, ip, alarm["ipPair"],
-                        alarm["median"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"]))
+                        medianrtt, nbprobes, diffmedian, deviation, msm_prb_ids) VALUES (%s, %s, %s, \
+                        %s, %s, %s, %s, %s, %s) RETURNING id", (probeip2asn[ip], ts, ip, alarm["ipPair"],
+                        alarm["median"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"], psycopg2.extras.Json(alarm["msmId"])))
 
 
                 # Push measurement and probes ID corresponding to this alarm
