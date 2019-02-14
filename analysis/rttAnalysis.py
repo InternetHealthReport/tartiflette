@@ -559,6 +559,10 @@ def detectRttChangesMongo(expId=None):
  
         # push alarms to the webserver
         for alarm in lastAlarms:
+            # Keep only alarms with deviation or delay change > 5
+            if alarm["devBound"]<5 or (alarm["diffMed"]>-5 and alarm["diffMed"]<5):
+                continue
+
             ts = alarm["timeBin"]+timedelta(seconds=expParam["timeWindow"]/2)
             for ip in alarm["ipPair"]:
                 cursor.execute("INSERT INTO ihr_delay_alarms (asn_id, timebin, ip, link, \
