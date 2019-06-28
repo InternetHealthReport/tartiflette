@@ -583,8 +583,8 @@ def detectRttChangesMongo(expId=None):
         # compute magnitude
         mag = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate), expId, alarmsCollection )
         for asn in asnList:
-            cursor.execute("INSERT INTO ihr_delay (asn_id, timebin, magnitude, deviation, label) \
-            VALUES (%s, %s, %s, %s, %s)", (asn, expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn], 0, "")) 
+            cursor.execute("INSERT INTO ihr_delay (asn_id, timebin, magnitude) \
+            VALUES (%s, %s, %s)", (asn, expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn])) 
 
         conn.commit()
         cursor.close()

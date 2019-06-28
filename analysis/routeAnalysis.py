@@ -317,8 +317,8 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         # compute magnitude
         mag, alarms = computeMagnitude(asnList, datetime.utcfromtimestamp(currDate),expId, probeip2asn, alarmsCollection, i2a)
         for asn, asname in asnList:
-            cursor.execute("INSERT INTO ihr_forwarding (asn_id, timebin, magnitude, resp, label) \
-            VALUES (%s, %s, %s, %s, %s)", (int(asn), expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn], 0, "")) 
+            cursor.execute("INSERT INTO ihr_forwarding (asn_id, timebin, magnitude) \
+            VALUES (%s, %s, %s)", (int(asn), expParam["start"]+timedelta(seconds=expParam["timeWindow"]/2), mag[asn])) 
 	
         conn.commit()
 
