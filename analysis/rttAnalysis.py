@@ -571,13 +571,13 @@ def detectRttChangesMongo(expId=None):
                         alarm["median"], alarm["nbProbes"], alarm["diffMed"], alarm["devBound"], psycopg2.extras.Json(alarm["msmId"])))
 
 
-                # Push measurement and probes ID corresponding to this alarm
-                alarmid = cursor.fetchone()[0]
-                for msmid, probes in alarm["msmId"].iteritems():
-                    if not msmid is None:
-                        for probeid in probes:
-                            cursor.execute("INSERT INTO ihr_delay_alarms_msms(alarm_id, msmid, probeid) \
-                                       VALUES (%s, %s, %s)", (alarmid, msmid, probeid))
+                # # Push measurement and probes ID corresponding to this alarm
+                # alarmid = cursor.fetchone()[0]
+                # for msmid, probes in alarm["msmId"].iteritems():
+                    # if not msmid is None:
+                        # for probeid in probes:
+                            # cursor.execute("INSERT INTO ihr_delay_alarms_msms(alarm_id, msmid, probeid) \
+                                       # VALUES (%s, %s, %s)", (alarmid, msmid, probeid))
 
 
         # compute magnitude

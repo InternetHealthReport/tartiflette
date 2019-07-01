@@ -332,13 +332,13 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
                     (alarm["asn"], ts, alarm["ip"], alarm["correlation"], alarm["responsibility"], 
                         alarm["pktDiff"], alarm["previousHop"], psycopg2.extras.Json(alarm["msmId"])))
 
-                # Push measurement and probes ID corresponding to this alarm
-                alarmid = cursor.fetchone()[0]
-                for msmid, probes in alarm["msmId"].iteritems():
-                    if not msmid is None:
-                        for probeid in probes:
-                            cursor.execute("INSERT INTO ihr_forwarding_alarms_msms(alarm_id, msmid, probeid) \
-                                   VALUES (%s, %s, %s)", (alarmid, msmid, probeid))
+                # # Push measurement and probes ID corresponding to this alarm
+                # alarmid = cursor.fetchone()[0]
+                # for msmid, probes in alarm["msmId"].iteritems():
+                    # if not msmid is None:
+                        # for probeid in probes:
+                            # cursor.execute("INSERT INTO ihr_forwarding_alarms_msms(alarm_id, msmid, probeid) \
+                                   # VALUES (%s, %s, %s)", (alarmid, msmid, probeid))
 
         conn.commit()
         cursor.close()
