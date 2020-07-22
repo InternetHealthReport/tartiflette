@@ -1,6 +1,6 @@
 # tartiflette: Pinpointing delay and forwarding anomalies from large-scale traceroute measurements.
 
-Our results with the RIPE Atlas traceroute data is available here: http://romain.iijlab.net/ihr/
+Our results with the RIPE Atlas traceroute data is available here: https://ihr.iijlab.net/ihr/en-us/api
 
 
 ## Requirements
