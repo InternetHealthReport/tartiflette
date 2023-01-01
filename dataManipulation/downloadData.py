@@ -24,9 +24,9 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], rev
         for msmType in msmTypes:
             # Read the corresponding id file
             if reverse:
-                msmIds = reversed(open("./%sMsmIdsv%s.txt" % (msmType, af), "r").readlines())
+                msmIds = reversed(open("../data/%sMsmIdsv%s.txt" % (msmType, af), "r").readlines())
             else:
-                msmIds = open("./%sMsmIdsv%s.txt" % (msmType, af), "r").readlines()
+                msmIds = open("../data/%sMsmIdsv%s.txt" % (msmType, af), "r").readlines()
 
             msmIds = msmIds[int(len(msmIds)*split):]
 
@@ -57,8 +57,9 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], rev
                             # else:
                                 # Output file
                                 fi = gzip.open("%s/%s_msmId%s.json.gz" % (path, currDate, msmId) ,"wb")
-                                print("Storing data for %s measurement id %s" % (currDate, msmId) )
-                                json.dump(results, fi)
+                                print("Storing data for %s measurement id %s" % (currDate, msmId))
+                                results_data = json.dumps(results)
+                                fi.write(results_data.encode('utf-8'))
                                 fi.close()
                             # if storage == "mongo":
                                 if len(results)==0:
@@ -80,11 +81,11 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], rev
 
                         else:
                             errors.append("%s: msmId=%s" % (currDate, msmId))
-                            print "error: %s: msmId=%s" % (currDate, msmId)
+                            print("error: %s: msmId=%s" % (currDate, msmId))
 
                     except ValueError:
                         errors.append("%s: msmId=%s" % (currDate, msmId))
-                        print "error: %s: msmId=%s" % (currDate, msmId)
+                        print("error: %s: msmId=%s" % (currDate, msmId))
 
                     finally:
                         currDate += timeWindow
@@ -98,7 +99,7 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], rev
 if __name__ == "__main__":
     # download yesterday's data
     if len(sys.argv) < 5:
-        print "usage: %s year month (builtin, anchor) af" % sys.argv[0]
+        print("usage: %s year month (builtin, anchor) af" % sys.argv[0])
         sys.exit()
 
     start = datetime(int(sys.argv[1]), int(sys.argv[2]), 1)

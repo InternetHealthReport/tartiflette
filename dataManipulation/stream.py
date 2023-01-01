@@ -2,13 +2,12 @@ from ripe.atlas.cousteau import AtlasStream
 import pymongo
 import textwrap
 import smtplib
-import datetime
-import emailConf
+from configs import emailConf
 import time
 import datetime 
 import sys
+import json
 from email.mime.text import MIMEText
-
 
 class ConnectionError(Exception):
     def __init__(self, value):
@@ -28,7 +27,7 @@ def sendMail(message):
     msg["To"] = emailConf.dest 
 
     # Send the mail
-    server = smtplib.SMTP(emailConf.server)
+    server = smtplib.SMTP(emailConf.server, port=587)
     server.starttls()
     server.login(emailConf.username, emailConf.password)
     server.sendmail(emailConf.orig, emailConf.dest, msg.as_string())
@@ -40,12 +39,11 @@ def on_result_response(*args):
     Function called every time we receive a new traceroute.
     Store the traceroute in the corresponding Mongodb collection.
     """
-
     global lastTimestamp
     global currCollection
     global db
     global lastDownload
-
+    print(json.dumps(args[0], indent=4, sort_keys=True))
     lastDownload = datetime.datetime.now()
     trace = args[0]
     if lastTimestamp/(24*3600) != trace["timestamp"]/(24*3600) or currCollection is None:
@@ -57,58 +55,57 @@ def on_result_response(*args):
 
     currCollection.insert_one(trace)
 
-
 def on_error(*args):
-    print "got in on_error"
-    print args
+    print("got in on_error")
+    print(args)
 
     raise ConnectionError("Error")
 
 
 def on_connect(*args):
-    print "got in on_connect"
-    print args
+    print("got in on_connect")
+    print(args)
 
 def on_reconnect(*args):
-    print "got in on_reconnect"
-    print args
+    print("got in on_reconnect")
+    print(args)
 
     raise ConnectionError("Reconnection")
 
 def on_close(*args):
-    print "got in on_close"
-    print args
+    print("got in on_close")
+    print(args)
 
     raise ConnectionError("Closed")
 
 def on_disconnect(*args):
-    print "got in on_disconnect"
-    print args
+    print("got in on_disconnect")
+    print(args)
 
     raise ConnectionError("Disconnection")
 
 
 def on_connect_error(*args):
-    print "got in on_connect_error"
-    print args
+    print("got in on_connect_error")
+    print(args)
 
     raise ConnectionError("Connection Error")
 
 def on_atlas_error(*args):
-    print "got in on_atlas_error"
-    print args
+    print("got in on_atlas_error")
+    print(args)
 
 
 def on_atlas_unsubscribe(*args):
-    print "got in on_atlas_unsubscribe"
-    print args
+    print("got in on_atlas_unsubscribe")
+    print(args)
     raise ConnectionError("Unsubscribed")
 
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print "usage: %s id0 [ id1 [id2 [...]]]" % sys.argv[0]
+        print("usage: %s id0 [ id1 [id2 [...]]]" % sys.argv[0])
         sys.exit()
 
     #Start time of this script, we'll try to get it working for 1 hour
@@ -125,7 +122,6 @@ if __name__ == "__main__":
     allmsm = []
     for msmId in sys.argv[1:]:
         allmsm.append(int(msmId))
-
 
     while (datetime.datetime.now()-starttime).seconds < 3600:
         try:
@@ -147,11 +143,11 @@ if __name__ == "__main__":
             atlas_stream.bind_channel(channel, on_result_response)
             
             for msm in allmsm:
-                stream_parameters = {"type": "traceroute", "buffering":True, "equalsTo":{"af": 4},   "msm": msm}
+                stream_parameters = {"type": "traceroute", "buffering":True, "msm": msm}
                 atlas_stream.start_stream(stream_type="result", **stream_parameters)
 
             # Run for 1 hour
-            print "start stream for msm ids: %s" % allmsm
+            print("start stream for msm ids: %s" % allmsm)
             atlas_stream.timeout(seconds=3600-(datetime.datetime.now()-starttime).seconds)
             # Shut down everything
             atlas_stream.disconnect()
@@ -159,15 +155,15 @@ if __name__ == "__main__":
 
         except ConnectionError as e:
             now = datetime.datetime.utcnow()
-            print "%s: %s" % (now, e)
-            print "last download: %s" % lastDownload
-            print "last connection: %s" % lastConnection
+            print("%s: %s" % (now, e))
+            print("last download: %s" % lastDownload)
+            print("last connection: %s" % lastConnection)
             atlas_stream.disconnect()
 
             # Wait a bit if the connection was made less than a minute ago
             if lastConnection + datetime.timedelta(60) > now:
                 time.sleep(60) 
-            print "Go back to the loop and reconnect"
+            print("Go back to the loop and reconnect")
 
         except Exception as e: 
             save_note = "Exception dump: %s : %s.\nCommand: %s" % (type(e).__name__, e, sys.argv)
@@ -175,3 +171,5 @@ if __name__ == "__main__":
             exception_fp.write(save_note) 
             sendMail(save_note)
             sys.exit()
+            
+            

@@ -28,7 +28,7 @@ from multiprocessing import Process, JoinableQueue, Manager, Pool
 import pygeoip
 import functools
 import socket
-import cPickle as pickle
+import pickle
 import gc
 import networkx as nx
 
@@ -53,13 +53,13 @@ def eccdf(a, **kwargs):
 def prefixDiffRtt(res, prefix=None, minPts=20):
     
     nbAlarms = 0
-    for k, v in res[0].iteritems():
+    for k, v in res[0].items():
         if not prefix is None and not k[0].startswith(prefix) and not k[1].startswith(prefix):
             continue
         if len(v)>minPts:
             nbAlarms += rttEvolution( (v, np.array(res[2][k])), k, prefix)
 
-    print " %s alarms in total" % nbAlarms
+    print(" %s alarms in total" % nbAlarms)
 
 def rttEvolution(res, ips, suffix):
     ipNames = {
@@ -94,8 +94,8 @@ def rttEvolution(res, ips, suffix):
     dateRange = [start+timedelta(hours=x) for x in range((diff.days+1)*24)] 
 
     for d in dateRange:
-        # print d
-        # print rttDiff[1]
+        # print(d)
+        # print(rttDiff[1])
         indices = rttDiff[1]==d
         dist = rttDiff[0][indices] 
         if len(dist) < 3:
@@ -224,7 +224,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
     """
 
     if configFile is None:
-        configFile = "conf/getRttData.conf"
+        configFile = "../configs/getRttData.conf"
 
     if os.path.exists(configFile):
         expParam = json.load(open(configFile,"r"), object_hook=json_util.object_hook)
@@ -261,7 +261,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
         col = "traceroute%s_%s_%02d_%02d" % (expParam["af"], c.year, c.month, c.day) 
         # totalRows = db[col].count({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}, "result.result.from": expParam["prefixes"] })
         # if not totalRows:
-            # print "No data for that time bin!"
+            # print("No data for that time bin!"
             # continue
         params = []
         binEdges = np.linspace(currDate, currDate+expParam["timeWindow"], expParam["nbProcesses"]*expParam["binMult"]+1)
@@ -273,7 +273,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
         rttResults =  pool.imap_unordered(rttAnalysis.computeRtt, params)
         diffRtt, nbRow = rttAnalysis.mergeRttResults(rttResults, currDate, tsS, expParam["nbProcesses"]*expParam["binMult"])
 
-        for k,v in diffRtt.iteritems():
+        for k,v in diffRtt.items():
             rawDiffRtt[k].extend(v["rtt"])
             # rawNbProbes[k].extend(v["probe"])
             rawDates[k].extend([c]*len(v["rtt"]))
@@ -342,7 +342,7 @@ def ref_countASN(ref):
     return count
 
 def countRootServersDDoS():
-    print "=========== IPv4 =============="
+    print("=========== IPv4 ==============")
     gList = [makeGraph(datetime.datetime(2015,11,30, 7, 0, tzinfo=timezone("UTC")), 4),
             makeGraph(datetime.datetime(2015,11,30, 8, 0, tzinfo=timezone("UTC")), 4),
             makeGraph(datetime.datetime(2015,12,1, 5, 0, tzinfo=timezone("UTC")), 4)]
@@ -350,7 +350,7 @@ def countRootServersDDoS():
 
     res4 = countRootServers(ref4, gList, af=4)
 
-    print "=========== IPv6 =============="
+    print("=========== IPv6 ==============")
     gList = [makeGraph(datetime.datetime(2015,11,30, 7, 0, tzinfo=timezone("UTC")), 6),
             makeGraph(datetime.datetime(2015,11,30, 8, 0, tzinfo=timezone("UTC")), 6),
             makeGraph(datetime.datetime(2015,12,1, 5, 0, tzinfo=timezone("UTC")), 6)]
@@ -423,11 +423,11 @@ def countRootServers(ref, gList, af=4):
                 count[root]["reported"].add(k)
 
     totalReported=0
-    for k,v in count.iteritems():
-        print "%s: %s out of %s reported pairs" % (k, len(v["reported"]), len(v["all"]))
+    for k,v in count.items():
+        print("%s: %s out of %s reported pairs" % (k, len(v["reported"]), len(v["all"])))
         totalReported+=len(v["reported"])
 
-    print "Total reported: %s" % totalReported
+    print("Total reported: %s" % totalReported)
 
     return count
 
@@ -527,9 +527,9 @@ def nbRouteChanges(expIds):
         df["_id"] = pd.to_datetime(df["_id"],utc=True)
         df.set_index("_id")
 
-        print "########## %s #############" % dst_ip
+        print("########## %s #############" % dst_ip)
         event = df.ix[df["count"]> np.mean(df["count"])+3*np.std(df["count"])]["_id"]
-        print event
+        print(event)
     
         fig = plt.figure()
         # plt.plot_date(df["_id"],df["count"],tz=timezone("UTC"))
@@ -556,7 +556,7 @@ def sampleVsShapiro(results):
         x = []
         y = []
 
-        for k,v in results[i].iteritems():
+        for k,v in results[i].items():
             if len(v) > 40:
                 x.append(np.mean(results[i+2][k]))
                 y.append(stats.shapiro(v)[1])
@@ -720,7 +720,7 @@ def distributionShapiro(results):
     for data, label, samples in [(results[0], "Measured", results[2]), (results[1], "Inferred", results[3])]:
         plt.figure()
         data0 = []
-        for k,v in data.iteritems():
+        for k,v in data.items():
             if len(v)>96:
                 data0.append(stats.shapiro(v)[1])
 
@@ -756,13 +756,13 @@ def count_nb_traceroutes():
         x4 = col4.count()
         x6 = col6.count()
 
-        print "%s %d IPv4 %d IPv6" %(d,x4,x6)
+        print("%s %d IPv4 %d IPv6" %(d,x4,x6))
 
         total4 += x4
         total6 += x6
 
-    print "Total for v4 : %s" % total4
-    print "Total for v6 : %s" % total6
+    print("Total for v4 : %s" % total4)
+    print("Total for v6 : %s" % total6)
 
 def count_ref_ipLinks(ref):
     s = set()
@@ -782,8 +782,8 @@ def count_nb_routers(ref):
     probes = [ip for ip in s if ip.startswith("probe")] 
     routers = [ip for ip in s if not ip.startswith("probe")] 
 
-    print "%s probes" % len(probes)
-    print "%s routers" % len(routers)
+    print("%s probes" % len(probes))
+    print("%s routers" % len(routers))
     return (routers, probes) 
 
 
@@ -797,7 +797,7 @@ def count_ref_ipPerAsn(ref=None):
     ipPerAsn = defaultdict(set)
 
     for targetRef in ref.values(): 
-        for router, hops in targetRef.iteritems():
+        for router, hops in targetRef.items():
             for hop in hops.keys():
                 if hop != "stats":
                     ipPerAsn[asn_by_addr(hop,gi)[0]].add(hop)
@@ -824,14 +824,14 @@ def country_by_addr(ip, db=None):
 
 def tfidf(df, events, metric, historySize, threshold, ax=None, group=None):
     nbDoc = np.abs(df[metric].sum())
-    print "nbDoc = %s" % nbDoc
+    print("nbDoc = %s" % nbDoc)
     alarms = []
 
     for bin in events.index:
         dfwin = df[(df["timeBin"] <= bin) & (df["timeBin"] >= bin-timedelta(hours=historySize))]
-        print "Event: %s " % bin
+        print("Event: %s " % bin)
         docLen = np.abs(np.sum(dfwin[dfwin["timeBin"] == bin][metric]))
-        print "docLen = %s" % docLen
+        print("docLen = %s" % docLen)
         # plt.figure()
         x = []
 
@@ -844,7 +844,7 @@ def tfidf(df, events, metric, historySize, threshold, ax=None, group=None):
             # voca["asn"] = dfwin["asn"].unique()
         if "prefix/24" in dfwin.columns: 
             voca["prefix/24"] = dfwin["prefix/24"].unique()
-        for col, words in voca.iteritems():
+        for col, words in voca.items():
             for word in words:
                 nbDocWord = np.abs(float(dfwin[dfwin[col] == word][metric].sum()))
                 wordFreq = np.abs(float(dfwin[(dfwin["timeBin"] == bin) & (dfwin[col] == word)][metric].sum()))
@@ -854,19 +854,19 @@ def tfidf(df, events, metric, historySize, threshold, ax=None, group=None):
                 # tfidf = (asnFreq/docLen) * np.log(nbDoc/nbDocAsn)
                 # tfidf = 1+np.log(asnFreq/docLen) * np.log(1+ (nbDoc/nbDocAsn))
                 if tfidf > threshold:
-                    print "\t%s, tfidf=%.2f, tf=%.2f" % (word, tfidf, tf)
+                    print("\t%s, tfidf=%.2f, tf=%.2f" % (word, tfidf, tf))
                     # label += word.partition(" ")[0]+" (%d%%)\n" % (tf*100)
                     label += word+" (%d%%)\n" % (tf*100)
 
                 # if tf > 0.05:
-                    # print "\t%s, tfidf=%.2f, tf=%.2f" % (word, tfidf, tf)
+                    # print("\t%s, tfidf=%.2f, tf=%.2f" % (word, tfidf, tf)
                     
                 # if tfidf > maxVal:
                     # maxVal = tfidf
 
                 x.append(tfidf)
 
-        # print "max asn: %s, %s occurences" % (maxLabel, maxVal)
+        # print("max asn: %s, %s occurences" % (maxLabel, maxVal))
         # plt.hist(x)
         # plt.savefig("tfidf_hist_%s.eps" % bin)
         alarms.append(label)
@@ -887,7 +887,7 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
 
     expId = "583bb58ab0ab0284c6969c5d"
     if df is None:
-        print "Retrieving Alarms"
+        print("Retrieving Alarms")
         db = tools.connect_mongo()
         collection = db.routeChanges
 
@@ -922,9 +922,9 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
                 "pktDiff": [], "nbSamples": [],  "resp": [], "respAbs": [], "asn": []} # "nbPeers": [], "nbSeen": [],
         gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
-        print "Compute stuff" # (%s rows)" % cursor.count() 
+        print("Compute stuff") # (%s rows)" % cursor.count() 
         for i, row in enumerate(cursor):
-            print "%dk \r" % (i/1000), 
+            print("%dk \r" % (i/1000)) 
             obsList = row["obsNextHops"] #eval("{"+row["obsNextHops"].partition("{")[2][:-1])
             refDict = dict(row["refNextHops"]) #eval("{"+row["refNextHops"].partition("{")[2][:-1])
             sumPktDiff = 0
@@ -961,15 +961,15 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
                 # data["nbSeen"].append(row["nbSeen"])
                 # data["nbPeers"].append(row["nbPeers"])
         
-        print "\nRetrieve AS numbers"
+        print("\nRetrieve AS numbers")
         df =  pd.DataFrame.from_dict(data)
         df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
         df.set_index("timeBin")
 
-        print "Release memory...",
+        print("Release memory...")
         del data
         gc.collect()
-        print "done!"
+        print("done!")
 
         # fct = functools.partial(asn_by_addr, db=gi, onlyNumber=True)
 
@@ -1027,8 +1027,8 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
         plt.ylabel("Magnitude (forwarding anomaly)")
         # plt.title(metric)
         
-        print "Found %s events" % len(events)
-        print events
+        print("Found %s events" % len(events))
+        print(events)
     
         if tfidf_minScore > 0:
             tfidf(df, events, metric, historySize, tfidf_minScore, ax, group)
@@ -1047,7 +1047,7 @@ def routeEventCharacterization(df=None, plotAsnData=False, metric="resp",
         totalEvents = [] 
         for asn in dfGrpAsn["asnL"].unique():
             if asn!= "Pkt.Loss" and (len(asnList) == 0 or int(asn) in asnList):
-                print asn
+                print(asn)
                 fig = plt.figure(figsize=(10,4))
                 # dfb = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2015,4,30,23), u'asn':asn,}, index=[datetime.datetime(2015,4,30,23)])
                 # dfe = pd.DataFrame({u'resp':0.0, u'label':"", u'timeBin':datetime.datetime(2016,1,1,0), u'asn':asn}, index=[datetime.datetime(2016,1,1,0)])
@@ -1181,7 +1181,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         db = tools.connect_mongo()
         exp = {"_id": objectid.ObjectId(expId)} 
         #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
-        print "Looking at experiment: %s" % exp["_id"]
+        print("Looking at experiment: %s" % exp["_id"])
 
         savedRef = pickle.load(open("saved_references/%s_diffRTT.pickle" % exp["_id"]))
 
@@ -1205,13 +1205,13 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         ref["country"] = pd.DataFrame(data={"country": countCountry.keys(), "count": countCountry.values()})
     
     if df is None:
-        print "Retrieving Alarms"
+        print("Retrieving Alarms")
         db = tools.connect_mongo()
         collection = db.rttChanges
 
         # exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         exp = {"_id": objectid.ObjectId(expId)} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
-        print "Looking at experiment: %s" % exp["_id"]
+        print("Looking at experiment: %s" % exp["_id"])
 
         cursor = collection.aggregate([
             {"$match": {
@@ -1243,7 +1243,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         df =  pd.DataFrame(list(cursor))
         df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
         df.set_index("timeBin")
-        print "got the data"
+        print("got the data")
 
     if "diffMedAbs" not in df.columns:
         df["diffMedAbs"] = df["diffMed"].abs()
@@ -1256,7 +1256,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
             df[unit+"_Pkt"] = df[unit]*df["nbSamples"]
 
     if "asn" not in df.columns:
-        print "find AS numbers"
+        print("find AS numbers")
         # find ASN for each ip
         # ga = pygeoip.GeoIP("../lib/GeoIPASNumv6.dat")
         ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
@@ -1288,7 +1288,7 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
         # df[unit+"_Earth"] = df[unit]/ref["country"]["count"].sum()
 
     if "prefix/24" not in df.columns:
-        print "find prefixes"
+        print("find prefixes")
         df["prefix/24"] = df["ipPair"].str.extract("([0-9]*\.[0-9]*\.[0-9]*)\.[0-9]*")+".0/24"
 
     # if "prefix/16" not in df.columns:
@@ -1313,8 +1313,8 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
     plt.ylabel("Magnitude (delay change)")
     plt.title(pltTitle)
     
-    print "Found %s events" % len(events)
-    print events
+    print("Found %s events" % len(events))
+    print(events)
 
     if tfidf_minScore > 0:
         alarms = tfidf(df, events, metric, historySize, tfidf_minScore, ax, group)
@@ -1446,8 +1446,8 @@ def rttEventCharacterization(df=None, ref=None, plotAsnData=False, tau=5, tfidf_
                     except ValueError:
                         pass 
 
-        print "Total nb. of detected events: mean=%s, median=%s, std=%s, sum=%s" % (np.mean(totalEvents), np.median(totalEvents), np.std(totalEvents), np.sum(totalEvents))
-        print "Total reported ASs: %s/%s" % (reportedAsn,len(df["asn_name"].unique()))
+        print("Total nb. of detected events: mean=%s, median=%s, std=%s, sum=%s" % (np.mean(totalEvents), np.median(totalEvents), np.std(totalEvents), np.sum(totalEvents)))
+        print("Total reported ASs: %s/%s" % (reportedAsn,len(df["asn_name"].unique())))
 
     if exportCsv:
         asnFile.close() 
@@ -1472,7 +1472,7 @@ def asRanking(df, ref, minNbIp=20, unit="diffAbs"):
 
 
 def rttValidation(df, unit="devBound"):
-    """ Print RTT diff. reference properties 
+    """ print(RTT diff. reference properties)
 
     """
     for y in ["nbProbes"]:
@@ -1508,13 +1508,13 @@ def rttValidation2(ref):
             count[len(v["probe"])].append(v["nbReported"])
 
    
-    mean = {k: float(nbAlarms[nbAlarms["_id"] == k]["count"].sum())/len(v) for k,v in count.iteritems()}
+    mean = {k: float(nbAlarms[nbAlarms["_id"] == k]["count"].sum())/len(v) for k,v in count.items()}
 
     return mean
 
 
 def rttRefStats(ref=None):
-    """ Print RTT diff. reference properties 
+    """ print(RTT diff. reference properties)
 
     """
     if ref is None:
@@ -1525,7 +1525,7 @@ def rttRefStats(ref=None):
         ref = pickle.load(open("saved_references/56d9b1cbb0ab021cc2102c10_diffRTT.pickle"))
 
 
-    print "%s ip pairs" % len(ref)
+    print("%s ip pairs" % len(ref))
  
     #### confidence intervals
     confUp = map(lambda x: np.mean(x["high"]) - np.mean(x["mean"]), ref.itervalues())
@@ -1533,13 +1533,13 @@ def rttRefStats(ref=None):
     confSize = map(lambda x: np.mean(x["high"]) - np.mean(x["low"]), ref.itervalues())
     nbSeen = map(lambda x: int(x["nbSeen"]), ref.itervalues())
 
-    print "upper confidence interval size: %s (+- %s)" % (np.mean(confUp), np.std(confUp))
-    print "\t min=%s max=%s" % (np.min(confUp), np.max(confUp))
-    print "lower confidence interval size: %s (+- %s)" % (np.mean(confDown), np.std(confDown))
-    print "\t min=%s max=%s" % (np.min(confDown), np.max(confDown))
-    print "confidence interval size: %s (+- %s)" % (np.mean(confSize), np.std(confSize))
-    print "confidence interval size: %s (+- %s) median" % (np.median(confSize), tools.mad(confSize))
-    print "\t min=%s max=%s" % (np.min(confSize), np.max(confSize))
+    print("upper confidence interval size: %s (+- %s)" % (np.mean(confUp), np.std(confUp)))
+    print("\t min=%s max=%s" % (np.min(confUp), np.max(confUp)))
+    print("lower confidence interval size: %s (+- %s)" % (np.mean(confDown), np.std(confDown)))
+    print("\t min=%s max=%s" % (np.min(confDown), np.max(confDown)))
+    print("confidence interval size: %s (+- %s)" % (np.mean(confSize), np.std(confSize)))
+    print("confidence interval size: %s (+- %s) median" % (np.median(confSize), tools.mad(confSize)))
+    print("\t min=%s max=%s" % (np.min(confSize), np.max(confSize)))
 
 
     plt.figure(figsize=(4,3))
@@ -1559,9 +1559,9 @@ def rttRefStats(ref=None):
 
     ### Number of probes
     nbProbes = map(lambda x: len(x["probe"]), ref.itervalues())
-    print "total number of probes: %s (+- %s)" % (np.mean(nbProbes), np.std(nbProbes))
-    print "total number of probes: %s (+- %s) median" % (np.median(nbProbes), tools.mad(nbProbes))
-    print "\t min=%s max=%s" % (np.min(nbProbes), np.max(nbProbes))
+    print("total number of probes: %s (+- %s)" % (np.mean(nbProbes), np.std(nbProbes)))
+    print("total number of probes: %s (+- %s) median" % (np.median(nbProbes), tools.mad(nbProbes)))
+    print("\t min=%s max=%s" % (np.min(nbProbes), np.max(nbProbes)))
 
     plt.figure(figsize=(4,3))
     # plt.hist(nbProbes,bins=50, log=True)
@@ -1583,11 +1583,11 @@ def rttRefStats(ref=None):
     idx1 = (nbProbes > 3)
     nbSeen = np.array(nbSeen)
     idx0 = (nbSeen > 24)
-    print idx0
-    print confSize[idx0 & idx1]
-    print nbProbes[idx0 & idx1]
-    print np.corrcoef(confSize[idx0 & idx1], nbProbes[idx0 & idx1])
-    print stats.spearmanr(confSize[idx0 & idx1], nbProbes[idx0 & idx1])
+    print(idx0)
+    print(confSize[idx0 & idx1])
+    print(nbProbes[idx0 & idx1])
+    print(np.corrcoef(confSize[idx0 & idx1], nbProbes[idx0 & idx1]))
+    print(stats.spearmanr(confSize[idx0 & idx1], nbProbes[idx0 & idx1]))
     plt.figure(figsize=(4,3))
     plt.plot(nbProbes[idx0 & idx1], confSize[idx0 & idx1], ".", ms=2)
     plt.xlabel("# probes")
@@ -1604,8 +1604,8 @@ def rttRefStats(ref=None):
     obsPeriod = np.array([1+(x["lastSeen"]-x["firstSeen"]).total_seconds() / 3600 for x in ref.itervalues()])
     nbReportedLinks = np.sum(nbReported != 0)
     nbNotReportedLinks = np.sum(nbReported == 0)
-    print "%s (%s%%) reported links" % (nbReportedLinks, nbReportedLinks/float(len(ref)))
-    print "%s (%s%%) not reported links" % (nbNotReportedLinks, nbNotReportedLinks/float(len(ref)))
+    print("%s (%s%%) reported links" % (nbReportedLinks, nbReportedLinks/float(len(ref))))
+    print("%s (%s%%) not reported links" % (nbNotReportedLinks, nbNotReportedLinks/float(len(ref))))
     
     plt.figure(figsize=(4,3))
     ecdf(nbSeen)
@@ -1642,7 +1642,7 @@ def rttRefStats(ref=None):
     for bound in [(0, 1*24, "< 1day"), (1*24, 7*24, "< 1week"), (7*24, 30*24, "< 1month")]:
         n = nbSeen[(obsPeriod>=bound[0]) & (obsPeriod<bound[1])]
         o = obsPeriod[(obsPeriod>=bound[0]) & (obsPeriod<bound[1])]
-        print "%s : %s pairs, observation ratio per link: mean=%s, median=%s" %(bound, len(n), np.mean(n/o), np.median(n/o))
+        print("%s : %s pairs, observation ratio per link: mean=%s, median=%s" %(bound, len(n), np.mean(n/o), np.median(n/o)))
         ecdf(n/o, label=bound[2])
     plt.grid(True)
     plt.xlabel("Observation ratio per link")
@@ -1700,13 +1700,13 @@ def routeRefStat(ref):
 
     nbHops = []
     nbReported = []
-    for dest, data in ref.iteritems():
+    for dest, data in ref.items():
 
-        for k, v in data.iteritems():
+        for k, v in data.items():
             if k == "x":
                 continue
             if len(v) > 1000:
-                print k
+                print(k)
             nbHops.append(len(v)-2)
 
             if v["stats"]["nbReported"]:
@@ -1722,7 +1722,7 @@ def exportAlarmsCsv(rtt="./results/csv/rttAlarms.csv", route="./results/csv/rout
     if not route is None:
         fi = open(route,"w")
 
-        print "Retrieving forwarding alarms"
+        print("Retrieving forwarding alarms")
         db = tools.connect_mongo()
         collection = db.routeChanges
 
@@ -1755,11 +1755,11 @@ def exportAlarmsCsv(rtt="./results/csv/rttAlarms.csv", route="./results/csv/rout
         
         gi = pygeoip.GeoIP("../lib/GeoIPASNum.dat")
 
-        print "Compute stuff" # (%s rows)" % cursor.count() 
+        print("Compute stuff") # (%s rows)" % cursor.count() 
         for i, row in enumerate(cursor):
             data = {"timeBin":[], "corr": [], "router":[],  "ip": [], 
                     "pktDiff": [], "nbSamples": [],  "resp": []} 
-            print "%dk \r" % (i/1000), 
+            print("%dk \r" % (i/1000))
             obsList = row["obsNextHops"] 
             refDict = dict(row["refNextHops"]) 
             sumPktDiff = 0
@@ -1796,13 +1796,13 @@ def exportAlarmsCsv(rtt="./results/csv/rttAlarms.csv", route="./results/csv/rout
 
     if not rtt is None:
         fi = open(rtt,"w")
-        print "Retrieving Delay Change Alarms"
+        print("Retrieving Delay Change Alarms")
         db = tools.connect_mongo()
         collection = db.rttChanges
 
         # exp = db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
         exp = {"_id": objectid.ObjectId("56d9b1cbb0ab021cc2102c10")} #db.rttExperiments.find_one({}, sort=[("$natural", -1)] )
-        print "Looking at experiment: %s" % exp["_id"]
+        print("Looking at experiment: %s" % exp["_id"])
 
         cursor = collection.aggregate([
             {"$match": {
@@ -1833,10 +1833,10 @@ def exportAlarmsCsv(rtt="./results/csv/rttAlarms.csv", route="./results/csv/rout
         df =  pd.DataFrame(list(cursor))
         df["timeBin"] = pd.to_datetime(df["timeBin"],utc=True)
         df.set_index("timeBin")
-        print "got the data"
+        print("got the data")
 
         if "asn" not in df.columns:
-            print "find AS numbers"
+            print("find AS numbers")
             # find ASN for each ip
             # ga = pygeoip.GeoIP("../lib/GeoIPASNumv6.dat")
             ga = pygeoip.GeoIP("../lib/GeoIPASNum.dat")

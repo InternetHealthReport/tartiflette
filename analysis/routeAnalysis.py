@@ -16,7 +16,7 @@ import pymongo
 from multiprocessing import Process, Pool
 from multiprocessing import Manager
 import tools
-import cPickle as pickle
+import pickle
 import pygeoip
 import socket
 import re
@@ -27,7 +27,7 @@ import random
 import statsmodels.api as sm
 try:
     import smtplib
-    import emailConf
+    from configs import emailConf
     from email.mime.text import MIMEText
 except ImportError:
     pass
@@ -51,7 +51,7 @@ def sendMail(message):
     msg["To"] = ",".join(emailConf.dest)
 
     # Send the mail
-    server = smtplib.SMTP(emailConf.server)
+    server = smtplib.SMTP(emailConf.server,port=587)
     server.starttls()
     server.login(emailConf.username, emailConf.password)
     server.sendmail(emailConf.orig, emailConf.dest, msg.as_string())
@@ -139,12 +139,13 @@ def processInit():
     global i2a
     client = pymongo.MongoClient("mongodb-iijlab",connect=True)
     db = client.atlas
-    i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle", "../lib/ixs_201802.jsonl")
+    i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle.bz2")
 
 
-def countRoutes( (af, start, end) ):
+def countRoutes(args):
     """Read traceroutes from a cursor. Used for multi-processing.
     """
+    af, start, end = args
 
     tsS = time.time()
     s = datetime.utcfromtimestamp(start)
@@ -169,19 +170,18 @@ def countRoutes( (af, start, end) ):
 
 
 def mergeRoutes(poolResults, currDate, tsS, nbBins):
-
     mergedRoutes = defaultdict(routeCount)
 
     nbRow = 0 
     for i, (oneProcResult, compRows) in enumerate(poolResults):
-        for target, routes in oneProcResult.iteritems():
-            for ip0, nextHops in routes.iteritems(): 
+        for target, routes in oneProcResult.items():
+            for ip0, nextHops in routes.items(): 
                 ip0Counter = mergedRoutes[target][ip0]
-                for ip1, probeCounts in nextHops.iteritems():
+                for ip1, probeCounts in nextHops.items():
                     if ip1 in ip0Counter:
-                        for probeIp, count in probeCounts.iteritems():
+                        for probeIp, count in probeCounts.items():
                             if probeIp == "msm":
-                                for msmId, probes in count.iteritems():
+                                for msmId, probes in count.items():
                                     ip0Counter[ip1]["msm"][msmId].update(probes)
                             else:
                                 ip0Counter[ip1][probeIp] += count 
@@ -190,8 +190,9 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
         nbRow += compRows
         timeSpent = (time.time()-tsS)
-        sys.stdout.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
-            "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
+        
+        print("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+            "#"*int((30*i/(nbBins-1))), "-"*int((30*(nbBins-i)/(nbBins-1))), timeSpent, float(nbRow)/timeSpent))
 
     return mergedRoutes, nbRow
 
@@ -249,25 +250,25 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         expParam["minASNEntropy"]= 0.5
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
-            print "Problem happened when updating the experiment dates!"
-            print resUpdate
+            print("Problem happened when updating the experiment dates!")
+            print(resUpdate)
             return
 
-        sys.stdout.write("Loading previous reference...")
+        print("Loading previous reference...")
         try:
             fi = open("saved_references/%s_%s.pickle" % (expId, "routeChange"), "rb")
             refRoutes = pickle.load(fi) 
         except IOError:
-            sys.stdout.write("corrupted file!?")
+            print("corrupted file!?")
             refRoutes = defaultdict(routeCountRef)
-        sys.stdout.write("done!\n")
+        print("done!\n")
 
     probe2asn = {}
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
     nbIteration = 0
 
-    sys.stdout.write("Route analysis:\n")
+    print("Route analysis:\n")
     for currDate in range(start,end,int(expParam["timeWindow"])):
         tsS = time.time()
 
@@ -277,17 +278,17 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         for i in range(nbProcesses*binMult):
             params.append( (expParam["af"], binEdges[i], binEdges[i+1]) )
 
-        nbRow = 0 
+        nbRow = 0
         routes =  pool.imap_unordered(countRoutes, params)
         routes, nbRow = mergeRoutes(routes, currDate, tsS, nbProcesses*binMult)
 
-        print "size before params: %s" % len(refRoutes)
+        print("size before params: %s" % len(refRoutes))
         # Detect route changes
         params = []
-        for target, newRoutes in routes.iteritems():
+        for target, newRoutes in routes.items():
             params.append( (newRoutes, refRoutes[target], expParam, expId, datetime.utcfromtimestamp(currDate), target, probe2asn ) )
 
-        print "size after params: %s" % len(refRoutes)
+        print("size after params: %s" % len(refRoutes))
 
         mapResult = pool.imap_unordered(routeChangeDetection, params)
 
@@ -295,7 +296,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         for target, newRef in mapResult:
             refRoutes[target] = newRef
 
-        print "size after analysis: %s" % len(refRoutes)
+        print("size after analysis: %s" % len(refRoutes))
             
         if nbRow>0:
             nbIteration+=1
@@ -303,13 +304,13 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
 
     # Update results on the webserver
     if streaming:
-        i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle", "../lib/ixs_201802.jsonl")
+        i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle.bz2")
         # update ASN table
         conn_string = "host='psqlserver' dbname='ihr'"
  
         # get a connection, if a connect cannot be made an exception will be raised here
-	conn = psycopg2.connect(conn_string)
-	cursor = conn.cursor()
+        conn = psycopg2.connect(conn_string)
+        cursor = conn.cursor()
         cursor.execute("SELECT number, name FROM ihr_asn WHERE tartiflette=TRUE;")
         asnList = cursor.fetchall()   
  
@@ -334,7 +335,7 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
 
                 # # Push measurement and probes ID corresponding to this alarm
                 # alarmid = cursor.fetchone()[0]
-                # for msmid, probes in alarm["msmId"].iteritems():
+                # for msmid, probes in alarm["msmId"].items():
                     # if not msmid is None:
                         # for probeid in probes:
                             # cursor.execute("INSERT INTO ihr_forwarding_alarms_msms(alarm_id, msmid, probeid) \
@@ -348,9 +349,9 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
     pool.close()
     pool.join()
     
-    sys.stdout.write("\n")
-    print "Writing route change reference to file system." 
-    fi = open("saved_references/%s_routeChange.pickle" % (expId), "w")
+    print("\n")
+    print("Writing route change reference to file system." )
+    fi = open("saved_references/%s_routeChange.pickle" % (expId), "wb")
     pickle.dump(refRoutes, fi, 2) 
     
 
@@ -382,7 +383,7 @@ def computeMagnitude(asnList, timeBin, expId, probeip2asn, collection, i2a, metr
     data = {"timeBin":[],  "router":[], "ip": [], "pktDiff": [], "resp": [], "asn": []} 
 
     for i, row in enumerate(cursor):
-        print "\r %dk" % (i/1000), 
+        print("\r %dk" % (i/1000),)
         obsList = row["obsNextHops"] 
         refDict = dict(row["refNextHops"]) 
         sumPktDiff = 0
@@ -437,8 +438,8 @@ def computeMagnitude(asnList, timeBin, expId, probeip2asn, collection, i2a, metr
     
     return magnitudes, alarms
 
-def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
-
+def routeChangeDetection(args):
+    routes, rr, param, expId, ts, target, probe2asn = args
     collection = db.routeChanges
     alpha = param["alpha"]
     minAsn= param["minASN"]
@@ -446,18 +447,18 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
     minSeen = param["minSeen"]
     alarms = []
 
-    for ip0, nextHops in routes.iteritems(): 
+    for ip0, nextHops in routes.items(): 
         nextHopsRef = rr[ip0] 
         allHops = set(["0"])
-        for key in set(nextHops.keys()).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
+        for key in set(nextHops.keys()).union([k for k, v in nextHopsRef.items() if isinstance(v, float)]):
             # Make sure we don't count ip that are not observed in both variables
             if nextHops[key] or nextHopsRef[key]:
                 allHops.add(key)
         
         reported = False
         # TODO change the following using dict instead of lists ?
-        probes = np.array([p for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() if isinstance(count, float) for x in range(int(count))])
-        hops = np.array([hop for hop, probeCount in nextHops.iteritems() for p, count in probeCount.iteritems() if isinstance(count, float) for x in range(int(count))])
+        probes = np.array([p for hop, probeCount in nextHops.items() for p, count in probeCount.items() if isinstance(count, float) for x in range(int(count))])
+        hops = np.array([hop for hop, probeCount in nextHops.items() for p, count in probeCount.items() if isinstance(count, float) for x in range(int(count))])
         mask = np.array([True]*len(hops))
         asn = defaultdict(int)
         asnProbeIdx = defaultdict(list)
@@ -505,7 +506,7 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
 
         # Refresh allHops list
         allHops = set(["0"])
-        for key in set(hops).union([k for k, v in nextHopsRef.iteritems() if isinstance(v, float)]):
+        for key in set(hops).union([k for k, v in nextHopsRef.items() if isinstance(v, float)]):
             # Make sure we don't count ip that are not observed in both variables
             if nextHops[key] or nextHopsRef[key]:
                 allHops.add(key)
@@ -522,12 +523,12 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
                 nbSamples = len(probes)
 
                 reported = True
-                msmIds = {hop.replace(".","_"):{str(msmid):list(probes)} for hop in nextHops.iterkeys() if "msm" in nextHops[hop] for msmid, probes in nextHops[hop]["msm"].iteritems()}
-                alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target, "refNextHops": [(k, v) for k,v in nextHopsRef.iteritems()], "obsNextHops": [(k, np.sum([x for x in v.values() if isinstance(x, float)])) for k, v in nextHops.iteritems()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"], "msmId": msmIds}
+                msmIds = {hop.replace(".","_"):{str(msmid):list(probes)} for hop in nextHops.iterkeys() if "msm" in nextHops[hop] for msmid, probes in nextHops[hop]["msm"].items()}
+                alarm = {"timeBin": ts, "ip": ip0, "corr": corr, "dst_ip": target, "refNextHops": [(k, v) for k,v in nextHopsRef.items()], "obsNextHops": [(k, np.sum([x for x in v.values() if isinstance(x, float)])) for k, v in nextHops.items()] , "expId": expId, "nbSamples": nbSamples, "nbPeers": len(count), "nbSeen": nextHopsRef["stats"]["nbSeen"], "msmId": msmIds}
 
                 if collection is None:
                     # Write the result to the standard output
-                    print alarm 
+                    print(alarm)
                 else:
                     alarms.append(alarm)
 
@@ -566,7 +567,7 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
 
     # Clean the reference data structure:
     toRemove = []
-    for ip0, nextHopsRef in rr.iteritems(): 
+    for ip0, nextHopsRef in rr.items(): 
         if len(nextHopsRef) == 0:
             # there should be at least the "stats" and one hop
             toRemove.append(ip0)
@@ -583,7 +584,7 @@ def routeChangeDetection( (routes, rr, param, expId, ts, target, probe2asn ) ):
     return target, rr
 
 if __name__ == "__main__":
-    sys.stdout.write("Started at %s\n" % datetime.now())
+    print("Started at %s\n" % datetime.now())
     try:
         expId = None
         if len(sys.argv)>1:
@@ -600,5 +601,5 @@ if __name__ == "__main__":
         if emailConf.dest:
             sendMail(save_note)
 
-    sys.stdout.write("Ended at %s\n" % datetime.now())
+    print("Ended at %s\n" % datetime.now())
 
