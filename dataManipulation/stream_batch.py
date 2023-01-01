@@ -25,7 +25,7 @@ if __name__ == "__main__":
     for b in batches:
 
         args = [str(id) for id in b] 
-        cmd = ["python", "stream.py"]
+        cmd = ["python3", "stream.py"]
         cmd.extend(args)
         proc.append(Popen(cmd))
 
