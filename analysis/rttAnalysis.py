@@ -15,7 +15,7 @@ import pymongo
 from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
 import statsmodels.api as sm
-import cPickle as pickle
+import pickle
 import pygeoip
 import socket
 import functools
@@ -29,7 +29,7 @@ import psycopg2.extras
 try:
     import smtplib
     from email.mime.text import MIMEText
-    import emailConf
+    from configs import emailConf
 except ImportError:
     pass
 import traceback
@@ -51,7 +51,7 @@ def sendMail(message):
     msg["To"] = ",".join(emailConf.dest)
 
     # Send the mail
-    server = smtplib.SMTP(emailConf.server)
+    server = smtplib.SMTP(emailConf.server,port=587)
     server.starttls()
     server.login(emailConf.username, emailConf.password)
     server.sendmail(emailConf.orig, emailConf.dest, msg.as_string())
@@ -105,13 +105,13 @@ def readOneTraceroute(trace, diffRtt, metric=np.nanmedian):
 
                     rttList[res["from"]].append(res["rtt"])
 
-                for ip2, rtts in rttList.iteritems():
+                for ip2, rtts in rttList.items():
                     rttAgg = np.median(rtts)
                     rttMed[ip2] = rttAgg
 
                     # Differential rtt
                     if len(prevRttMed):
-                        for ip1, pRttAgg in prevRttMed.iteritems():
+                        for ip1, pRttAgg in prevRttMed.items():
                             if ip1 == ip2 :
                                 continue
 
@@ -144,11 +144,12 @@ def processInit():
     db = client.atlas
 
 
-def computeRtt( (af, start, end, skip, limit, prefixes) ):
+def computeRtt(args):
     """Read traceroutes from a cursor. Used for multi-processing.
 
     Assume start and end are less than 24h apart
     """
+    af, start, end, skip, limit, prefixes = args
     s = datetime.utcfromtimestamp(start)
     e = datetime.utcfromtimestamp(end)
     collectionNames = set(["traceroute%s_%s_%02d_%02d" % (af, d.year, d.month, d.day) for d in [s,e]])
@@ -188,7 +189,7 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
                 continue
 
             if not iRtt is None:
-                for k, v in iRtt.iteritems():
+                for k, v in iRtt.items():
 
                     # put together data for (ip1, ip2) and (ip2, ip1)
                     ipPair = tuple(sorted(k))
@@ -196,7 +197,7 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
                         inf = diffRtt[ipPair]
                         inf["rtt"].extend(v["rtt"])
                         inf["probe"].extend(v["probe"])
-                        for msmId, probes in v["msmId"].iteritems():
+                        for msmId, probes in v["msmId"].items():
                             inf["msmId"][msmId].update(probes)
                     else:
                         diffRtt[ipPair] = v
@@ -204,10 +205,10 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
             nbRow += compRows
             timeSpent = (time.time()-tsS)
             if nbBins>1:
-                sys.stdout.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+                print("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
                 "#"*(30*i/(nbBins-1)), "-"*(30*(nbBins-i)/(nbBins-1)), timeSpent, float(nbRow)/timeSpent))
             else:
-                sys.stdout.write("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
+                print("\r%s     [%s%s]     %.1f sec,      %.1f row/sec           " % (datetime.utcfromtimestamp(currDate),
                 "#"*(30*i/(nbBins)), "-"*(30*(nbBins-i)/(nbBins)), timeSpent, float(nbRow)/timeSpent))
 
         return diffRtt, nbRow
@@ -227,7 +228,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
     confInterval = param["confInterval"]
     minSeen = param["minSeen"]
 
-    for ipPair, data in sampleDistributions.iteritems():
+    for ipPair, data in sampleDistributions.items():
 
         dist = np.array(data["rtt"])
         probes = np.array(data["probe"])
@@ -305,7 +306,7 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
                         deviation = diffMed / (ref["high"]-ref["mean"])
                         devBound = diff / (ref["high"]-ref["mean"])
 
-                    nosetMsmId = {str(k): list(v) for k, v in data["msmId"].iteritems()}
+                    nosetMsmId = {str(k): list(v) for k, v in data["msmId"].items()}
                     alarm = {"timeBin": ts, "ipPair": ipPair, "currLow": currLow,"currHigh": currHi,
                             "refHigh": ref["high"], "ref":ref["mean"], "refLow":ref["low"], 
                             "median": med, "nbSamples": n, "nbProbes": nbProbes, "deviation": deviation,
@@ -363,14 +364,14 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
 def cleanRef(ref, currDate, maxSilence=7):
 
     toRemove = []
-    for ipPair, data in ref.iteritems():
+    for ipPair, data in ref.items():
         if data["lastSeen"] < currDate - timedelta(days=maxSilence):
             toRemove.append(ipPair)
 
     for ipPair in toRemove:
         del ref[ipPair]
 
-    print "Removed references for %s ips" % len(toRemove)
+    print("Removed references for %s ips" % len(toRemove))
 
     return ref
 
@@ -401,7 +402,7 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
 
     if "asn" not in df.columns:
         # find ASN for each ip
-        i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle", "../lib/ixs_201802.jsonl")
+        i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle.bz2")
         fct = functools.partial(i2a.ip2asn)
         sTmp = df["ipPair"].apply(fct).apply(pd.Series)
         df["asn"] = sTmp[0]
@@ -474,18 +475,18 @@ def detectRttChangesMongo(expId=None):
         expParam["analysisTimeUTC"] = now
         resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
         if resUpdate.modified_count != 1:
-            print "Problem happened when updating the experiment dates!"
-            print resUpdate
+            print("Problem happened when updating the experiment dates!")
+            print(resUpdate)
             return
 
-        sys.stdout.write("Loading previous reference...")
+        print("Loading previous reference...")
         try:
             fi = open("saved_references/%s_%s.pickle" % (expId, "diffRTT"), "rb")
             sampleMediandiff = pickle.load(fi) 
         except IOError:
             sampleMediandiff = {}
 
-        sys.stdout.write("done!\n")
+        print("done!\n")
 
     if not expParam["prefixes"] is None:
         expParam["prefixes"] = re.compile(expParam["prefixes"])
@@ -493,24 +494,24 @@ def detectRttChangesMongo(expId=None):
     probe2asn = {}
     probeip2asn = {}
     lastAlarms = []
-    i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle", "../lib/ixs_201802.jsonl")
+    i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle.bz2")
 
     start = int(calendar.timegm(expParam["start"].timetuple()))
     end = int(calendar.timegm(expParam["end"].timetuple()))
 
     for currDate in range(start,end,int(expParam["timeWindow"])):
-        sys.stdout.write("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
+        print("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
         tsS = time.time()
 
         # Get distributions for the current time bin
         c = datetime.utcfromtimestamp(currDate)
         col = "traceroute%s_%s_%02d_%02d" % (expParam["af"], c.year, c.month, c.day) 
         if expParam["prefixes"] is None:
-            totalRows = db[col].count({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}})
+            totalRows = db[col].count_documents({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}})
         else:
-            totalRows = db[col].count({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}, "result.result.from": expParam["prefixes"] })
+            totalRows = db[col].count_documents({ "timestamp": {"$gte": currDate, "$lt": currDate+expParam["timeWindow"]}, "result.result.from": expParam["prefixes"]})
         if not totalRows:
-            print "No data for that time bin!"
+            print("No data for that time bin!")
             continue
         params = []
         limit = int(totalRows/(nbProcesses*binMult-1))
@@ -528,7 +529,7 @@ def detectRttChangesMongo(expId=None):
                     datetime.utcfromtimestamp(currDate), probe2asn, i2a, alarmsCollection, streaming, probeip2asn)
 
         timeSpent = (time.time()-tsS)
-        sys.stdout.write(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
+        print(", %s sec/bin,  %s row/sec\r" % (timeSpent, float(nbRow)/timeSpent))
     
     pool.close()
     pool.join()
@@ -539,8 +540,8 @@ def detectRttChangesMongo(expId=None):
         conn_string = "host='psqlserver' dbname='ihr'"
  
         # get a connection, if a connect cannot be made an exception will be raised here
-	conn = psycopg2.connect(conn_string)
-	cursor = conn.cursor()
+        conn = psycopg2.connect(conn_string)
+        cursor = conn.cursor()
 
         asnList = set(probeip2asn.values())
         cursor.execute("SELECT number FROM ihr_asn WHERE tartiflette=TRUE")
@@ -573,7 +574,7 @@ def detectRttChangesMongo(expId=None):
 
                 # # Push measurement and probes ID corresponding to this alarm
                 # alarmid = cursor.fetchone()[0]
-                # for msmid, probes in alarm["msmId"].iteritems():
+                # for msmid, probes in alarm["msmId"].items():
                     # if not msmid is None:
                         # for probeid in probes:
                             # cursor.execute("INSERT INTO ihr_delay_alarms_msms(alarm_id, msmid, probeid) \
@@ -590,17 +591,17 @@ def detectRttChangesMongo(expId=None):
         cursor.close()
         conn.close()
 
-        print "Cleaning rtt change reference." 
+        print("Cleaning rtt change reference.")
         sampleMediandiff = cleanRef(sampleMediandiff, datetime.utcfromtimestamp(currDate))
 
-    print "Writing diffRTT reference to file system." 
-    fi = open("saved_references/%s_diffRTT.pickle" % (expId), "w")
+    print("Writing diffRTT reference to file system.")
+    fi = open("saved_references/%s_diffRTT.pickle" % (expId), "wb")
     pickle.dump(sampleMediandiff, fi, 2) 
 
 
 
 if __name__ == "__main__":
-    sys.stdout.write("Started at %s\n" % datetime.now())
+    print("Started at %s\n" % datetime.now())
     try: 
         expId = None
         if len(sys.argv)>1:
@@ -617,5 +618,5 @@ if __name__ == "__main__":
         if emailConf.dest:
             sendMail(save_note)
 
-    sys.stdout.write("Ended at %s\n" % datetime.now())
+    print("Ended at %s\n" % datetime.now())
 

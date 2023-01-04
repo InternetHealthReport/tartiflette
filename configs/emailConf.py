@@ -5,5 +5,3 @@ username = "from@email.com"
 password = "stmppassword"
 
 server = "smtp.email.com"
-
-

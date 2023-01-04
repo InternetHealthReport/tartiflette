@@ -1,4 +1,3 @@
-import sys
 from ripe.atlas.cousteau import AtlasRequest 
 from ripe.atlas.cousteau import MeasurementRequest
 
@@ -10,7 +9,7 @@ def getAnchorMsmPage(page=1):
     (is_success, response) = request.get()
 
     if not is_success:
-            print "Error could not get all anchors data!"
+            print ("Error could not get all anchors data!")
             return []
     else:
         if response["next"] is None:
@@ -33,32 +32,31 @@ def getAllAnchorMsm():
 
 def storeTracerouteIds():
 
-    sys.stdout.write("Getting all anchoring measurement ids...\n")
+    print("Getting all anchoring measurement ids...\n")
     allMsm = getAllAnchorMsm()
-    sys.stdout.write("%s anchoring measurements found!\n" % len(allMsm))
+    print("%s anchoring measurements found!\n" % len(allMsm))
 
-    v4file = open("anchorMsmIdsv4.txt","w")
-    v6file = open("anchorMsmIdsv6.txt","w")
+    v4file = open("../data/anchorMsmIdsv4.txt","w")
+    v6file = open("../data/anchorMsmIdsv6.txt","w")
     count = 0
 
-    sys.stdout.write("Filtering out traceroute measurements...\n")
+    print("Filtering out traceroute measurements...\n")
     # filters = {"type": "traceroute", "is_public": True}
     # measurements = MeasurementRequest(**filters)
-    
+     
     for m in allMsm:
         request = AtlasRequest(**{"url_path": m["measurement"][len(u"https://atlas.ripe.net"):]})
         (is_success, response) = request.get()
 
         if not is_success:
-            print "error cannot get the measurment details!?\n %s" % m
+            print("error cannot get the measurment details!?\n %s" % m)
             continue
 
         if response["type"] != "traceroute":
             continue
 
         count += 1
-        sys.stdout.write("\r%s anchoring measurements found" % count)
-        sys.stdout.flush()
+        print("\r%s anchoring measurements found" % count,flush=True,end="")
         if response["af"] == 4:
             v4file.write('"msm_id":%s\n' % response["id"])
             v4file.flush()
@@ -66,7 +64,7 @@ def storeTracerouteIds():
             v6file.write('"msm_id":%s\n' % response["id"])
             v6file.flush()
         else:
-            print "Unknown address family!! \n %s" % m
+            print("Unknown address family!! \n %s" % m)
 
 
 storeTracerouteIds()

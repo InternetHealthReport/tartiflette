@@ -23,7 +23,7 @@ import gzip
 def importRangeOfDates(start, end, msmType, af=""):
 
     if msmType != "builtin" and msmType != "anchor":
-        print "measurement type unknown!"
+        print("measurement type unknown!")
         return
    
     #TODO allow only af==4 or 6
@@ -33,7 +33,7 @@ def importRangeOfDates(start, end, msmType, af=""):
     else:
         aflabel = af
 
-    client = pymongo.MongoClient("mongodb-ikebukuro")
+    client = pymongo.MongoClient("mongodb-iijlab")
     db = client.atlas
 
     nbDays = (end-start).days
@@ -68,10 +68,10 @@ def importRangeOfDates(start, end, msmType, af=""):
                 fi = gzip.open(filename)
                 data = json.load(fi)
                 if len(data):
-                    print filename
+                    print(filename)
                     col.insert_many(data)
                 else:
-                    print "%s is empty!" % filename
+                    print("%s is empty!" % filename)
             col.create_index("timestamp", background=True)
 
 

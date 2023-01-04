@@ -16,4 +16,4 @@ for msm in measurements:
 
 # Print total count of found measurements
 print("Found %s interesting measurement out of %s" % (count, measurements.total_count))
-print list(set(msmIds))
+print(list(set(msmIds)))
