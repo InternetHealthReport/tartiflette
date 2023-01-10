@@ -6,13 +6,18 @@ from pytz import timezone
 import calendar
 import time
 import os
+import logging
 import json
 import glob
 import numpy as np
 from collections import defaultdict
+from confluent_kafka import Producer
+from confluent_kafka import Consumer, KafkaError
+from confluent_kafka.admin import AdminClient, NewTopic
 from collections import deque
 from scipy import stats
 import pymongo
+import msgpack
 from multiprocessing import Process, Pool
 from multiprocessing import Manager
 import tools
@@ -84,6 +89,15 @@ def routeCount():
     return defaultdict(routeCountRef)
 
 
+def delivery_report(err, msg):
+    """ Called once for each message produced to indicate delivery result.
+        Triggered by poll() or flush(). """
+    if err is not None:
+        logging.error('Message delivery failed: {}'.format(err))
+    else:
+        # print('Message delivered to {} [{}]'.format(msg.topic(), msg.partition()))
+        pass
+
 def readOneTraceroute(trace, routes):
     """Read a single traceroute instance and compute the corresponding routes.
     """
@@ -137,8 +151,8 @@ i2a = None
 def processInit():
     global db
     global i2a
-    client = pymongo.MongoClient("mongodb-iijlab",connect=True)
-    db = client.atlas
+    # client = pymongo.MongoClient("mongodb://127.0.0.1:27017",username="mongo",password="mongo")
+    # db = client.atlas
     i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle.bz2")
 
 
@@ -199,60 +213,87 @@ def mergeRoutes(poolResults, currDate, tsS, nbBins):
 
 
 def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO config file implementation
-
+    global producer
+    global created_topics
     streaming = False
     replay = False
     nbProcesses = 18
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
-
-    client = pymongo.MongoClient("mongodb-iijlab")
-    db = client.atlas
-    detectionExperiments = db.routeExperiments
-    alarmsCollection = db.routeChanges
+    topics = ["routeExperiments", "routeChanges"]
+    
+    if not set(topics).issubset(set(created_topics)):
+        topic_list = [NewTopic(topic, num_partitions=3, replication_factor=2) for topic in topics]
+        created_topic = admin_client.create_topics(topic_list)
+        for topic, f in created_topic.items():
+            try:
+                f.result()
+                print(f"Topic {topic} created")
+            except Exception as e:
+                print(f"Failed to create topic {topic}: {e}")
+        created_topics.append(topic)
+        
     refRoutes=None
 
-    if expId == "stream":
-        expParam = detectionExperiments.find_one({"stream": True})
-        expId = expParam["_id"]
+    # if expId == "stream":
+    #     expParam = detectionExperiments.find_one({"stream": True})
+    #     expId = expParam["_id"]
 
     if expId is None:
         expParam = {
                 "timeWindow": 60*60, # in seconds 
-                "start": datetime(2016, 11, 15, 0, 0, tzinfo=timezone("UTC")), 
-                "end":   datetime(2016, 11, 26, 0, 0, tzinfo=timezone("UTC")),
+                "start": datetime(2016, 11, 15, 0, 0, tzinfo=timezone("UTC")).strftime('%Y-%m-%dT%H:%M:%SZ'), 
+                "end":   datetime(2016, 11, 26, 0, 0, tzinfo=timezone("UTC")).strftime('%Y-%m-%dT%H:%M:%SZ'),
                 "alpha": 0.01, # parameter for exponential smoothing 
                 "minCorr": -0.25, # correlation scores lower than this value will be reported
                 "minSeen": 3,
                 "minASN": 3,
                 "minASNEntropy": 0.5,
                 "af": "",
-                "experimentDate": datetime.now(),
+                "experimentDate": datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
                 "comment": "Study case for Emile (8.8.8.8) Nov. 2016",
                 }
-
-        expId = detectionExperiments.insert_one(expParam).inserted_id 
+        try:
+            logging.debug('going to produce something')
+            expId = producer.produce(
+                topics[0], 
+                msgpack.packb(expParam, use_bin_type=True),
+                callback=delivery_report,
+            )
+            logging.debug('produced something')
+            producer.poll(0)
+        except BufferError:
+            logging.error('Local queue is full ')
+            producer.flush()
+            expId = producer.produce(
+                topics[0], 
+                msgpack.packb(expParam, use_bin_type=True),
+                callback=delivery_report,
+            )
+            producer.poll(0)
+        producer.flush()           
+        sampleMediandiff = {}
         refRoutes = defaultdict(routeCountRef)
 
     else:
         # Streaming mode: analyze the last time bin
         streaming = True
         now = datetime.now(timezone("UTC"))  
-        expParam = detectionExperiments.find_one({"_id": expId})
-        if replay:
-            expParam["start"]= expParam["end"]
-            expParam["end"]= expParam["start"]+timedelta(hours=1)
-        else:
-            expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
-            expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
-        expParam["analysisTimeUTC"] = now
-        expParam["minASN"]=3
-        expParam["minASNEntropy"]= 0.5
-        resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
-        if resUpdate.modified_count != 1:
-            print("Problem happened when updating the experiment dates!")
-            print(resUpdate)
-            return
+        # expParam = detectionExperiments.find_one({"_id": expId})
+        # if replay:
+        #     expParam["start"]= expParam["end"]
+        #     expParam["end"]= expParam["start"]+timedelta(hours=1)
+        # else:
+        #     expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
+        #     expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
+        # expParam["analysisTimeUTC"] = now
+        # expParam["minASN"]=3
+        # expParam["minASNEntropy"]= 0.5
+        # resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
+        # if resUpdate.modified_count != 1:
+        #     print("Problem happened when updating the experiment dates!")
+        #     print(resUpdate)
+        #     return
 
         print("Loading previous reference...")
         try:
@@ -264,8 +305,11 @@ def detectRouteChangesMongo(expId=None, configFile="detection.cfg"): # TODO conf
         print("done!\n")
 
     probe2asn = {}
-    start = int(calendar.timegm(expParam["start"].timetuple()))
-    end = int(calendar.timegm(expParam["end"].timetuple()))
+    start_time = datetime.strptime(expParam["start"], '%Y-%m-%dT%H:%M:%SZ')
+    end_time = datetime.strptime(expParam["end"], '%Y-%m-%dT%H:%M:%SZ')
+
+    start = int(calendar.timegm(start_time.timetuple()))
+    end = int(calendar.timegm(end_time.timetuple()))
     nbIteration = 0
 
     print("Route analysis:\n")
@@ -439,8 +483,9 @@ def computeMagnitude(asnList, timeBin, expId, probeip2asn, collection, i2a, metr
     return magnitudes, alarms
 
 def routeChangeDetection(args):
+    global producer
     routes, rr, param, expId, ts, target, probe2asn = args
-    collection = db.routeChanges
+    collection = None
     alpha = param["alpha"]
     minAsn= param["minASN"]
     minASNEntropy= param["minASNEntropy"]
@@ -578,13 +623,60 @@ def routeChangeDetection(args):
         del rr[ip] 
 
     # Insert all alarms to the database
-    if alarms and not collection is None:
-        collection.insert_many(alarms)
+    topic_name = "alarms"
+    if alarms:
+        for alarm in alarms:
+            try:
+                logging.debug('going to produce something')
+                expId = producer.produce(
+                    topic_name, 
+                    msgpack.packb(alarm, use_bin_type=True),
+                    callback=delivery_report,
+                )
+                logging.debug('produced something')
+                producer.poll(0)
+            except BufferError:
+                logging.error('Local queue is full ')
+                producer.flush()
+                expId = producer.produce(
+                    topic_name, 
+                    msgpack.packb(alarm, use_bin_type=True),
+                    callback=delivery_report,
+                )
+                producer.poll(0)
+            producer.flush()      
+            
 
     return target, rr
 
 if __name__ == "__main__":
     print("Started at %s\n" % datetime.now())
+    
+    # logging
+    FORMAT = '%(asctime)s %(processName)s %(message)s'
+    logging.basicConfig(
+            format=FORMAT, filename='../logs/route-Analysis.log' , 
+            level=logging.WARN, datefmt='%Y-%m-%d %H:%M:%S'
+            )
+    logging.info("Started: %s" % sys.argv)
+    
+    producer = Producer({'bootstrap.servers':"kafka1:9092,kafka2:9092,kafka3:9092",
+            'queue.buffering.max.messages': 10000000,
+            'queue.buffering.max.kbytes': 2097151,
+            'linger.ms': 200,
+            'batch.num.messages': 1000000,
+            'message.max.bytes': 999000,
+            'default.topic.config': {'compression.codec': 'snappy'}})    
+    admin_client = AdminClient({'bootstrap.servers':"kafka1:9092,kafka2:9092,kafka3:9092"})
+    
+    created_topics = list(admin_client.list_topics(timeout=5).topics.keys())
+    
+    consumer = Consumer({
+        'bootstrap.servers': 'kafka1:9092, kafka2:9092, kafka3:9092',
+        'group.id': "rtt-analysis-consumer-group",
+        'auto.offset.reset': 'earliest',
+        })
+    
     try:
         expId = None
         if len(sys.argv)>1:
@@ -596,7 +688,7 @@ if __name__ == "__main__":
     except Exception as e: 
         tb = traceback.format_exc()
         save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
-        exception_fp = open("dump_%s.err" % datetime.now(), "w")
+        exception_fp = open("../logs/routeAnalysis_dump_%s.err" % datetime.now(), "w")
         exception_fp.write(save_note) 
         if emailConf.dest:
             sendMail(save_note)

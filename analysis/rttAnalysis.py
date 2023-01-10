@@ -12,6 +12,9 @@ from collections import defaultdict
 from collections import deque
 from scipy import stats
 import pymongo
+from confluent_kafka import Producer
+from confluent_kafka import Consumer, KafkaError
+from confluent_kafka.admin import AdminClient, NewTopic
 from multiprocessing import Process, JoinableQueue, Manager, Pool
 import tools
 import statsmodels.api as sm
@@ -24,8 +27,9 @@ import random
 import re
 import json
 import psycopg2
+import msgpack
 import psycopg2.extras
-
+import logging
 try:
     import smtplib
     from email.mime.text import MIMEText
@@ -140,8 +144,8 @@ db = None
 
 def processInit():
     global db
-    client = pymongo.MongoClient("mongodb-iijlab",connect=True)
-    db = client.atlas
+    # client = pymongo.MongoClient("mongodb://127.0.0.1:27017",username="mongo",password="mongo")
+    # db = client.atlas
 
 
 def computeRtt(args):
@@ -149,36 +153,59 @@ def computeRtt(args):
 
     Assume start and end are less than 24h apart
     """
+    global consumer
     af, start, end, skip, limit, prefixes = args
-    s = datetime.utcfromtimestamp(start)
-    e = datetime.utcfromtimestamp(end)
-    collectionNames = set(["traceroute%s_%s_%02d_%02d" % (af, d.year, d.month, d.day) for d in [s,e]])
-
     nbRow = 0
     diffRtt = defaultdict(dict)
-    for col in collectionNames:
-        collection = db[col]
-        if prefixes is None:
-            cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end} } , 
-                projection={"result":1, "from":1, "prb_id":1, "msm_id":1} , 
-                skip = skip,
-                limit = limit,
-                # cursor_type=pymongo.cursor.CursorType.EXHAUST,
-                batch_size=int(10e6))
-        else:
-            cursor = collection.find( { "timestamp": {"$gte": start, "$lt": end}, "result.result.from": prefixes } , 
-                projection={"result":1, "from":1, "prb_id":1, "msm_id":1} , 
-                skip = skip,
-                limit = limit,
-                # cursor_type=pymongo.cursor.CursorType.EXHAUST,
-                batch_size=int(10e6))
-        for trace in cursor: 
-            readOneTraceroute(trace, diffRtt)
-            nbRow += 1
-
+    s = datetime.utcfromtimestamp(start)
+    e = datetime.utcfromtimestamp(end)
+    topics = set(["traceroute%s_%s_%02d_%02d" % (af, d.year, d.month, d.day) for d in [s,e]])
+    consumer.subscribe(topics)
+    traceroutes = get_consumed_filtered_traceroutes(start, end, skip, limit, prefixes)
+    print(traceroutes)
+    for traceroute in traceroutes:
+        readOneTraceroute(traceroute, diffRtt)
+        nbRow += 1
     return diffRtt, nbRow
 
-######## used by child processes
+def get_consumed_filtered_traceroutes(start, end, skip, limit, prefixes):
+    global consumer
+    filtered_messages = []
+    while True:
+        msg = consumer.poll(10.0)
+        if msg is None:
+            continue
+        if msg.error():
+            if msg.error().code() == KafkaError.PARTITION_EOF:
+                print('Reached end of topic {0} [{1}] at offset {2}'.format(msg.topic(), msg.partition(), msg.offset()))
+                break
+            else:
+                print(msg.error())
+        else:
+            msg_val = msgpack.unpackb(msg.value(), raw=False)
+            message = json.loads(msg_val)
+            timestamp = msg_val["timestamp"]
+            
+            if not prefixes:
+                if timestamp >= start and timestamp < end:
+                    filtered_message = {
+                            "result": message["result"],
+                            "from": message["from"],
+                            "prb_id": message["prb_id"],
+                            "msm_id": message["msm_id"]
+                    }
+            else:
+                if msg_val["result.result.from"] == prefixes:
+                    filtered_message = {
+                        "result": message["result"],
+                        "from": message["from"],
+                        "prb_id": message["prb_id"],
+                        "msm_id": message["msm_id"]
+                    }
+                filtered_messages.append(filtered_message)
+        if len(filtered_messages) >= limit + skip:
+            break
+    return filtered_messages
 
 def mergeRttResults(rttResults, currDate, tsS, nbBins):
 
@@ -216,6 +243,7 @@ def mergeRttResults(rttResults, currDate, tsS, nbBins):
 
 def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2asn, i2a,
     collection=None, streaming=False, probeip2asn=None):
+    global producer
 
     if sampleDistributions is None:
         return
@@ -355,8 +383,28 @@ def outlierDetection(sampleDistributions, smoothMean, param, expId, ts, probe2as
 
 
     # Insert all alarms to the database
-    if len(alarms) and not collection is None:
-        collection.insert_many(alarms)
+    topic_name = "alarms"
+    if len(alarms):
+        for alarm in alarms:
+            try:
+                logging.debug('going to produce something')
+                expId = producer.produce(
+                    topic_name, 
+                    msgpack.packb(alarm, use_bin_type=True),
+                    callback=delivery_report,
+                )
+                logging.debug('produced something')
+                producer.poll(0)
+            except BufferError:
+                logging.error('Local queue is full ')
+                producer.flush()
+                expId = producer.produce(
+                    topic_name, 
+                    msgpack.packb(alarm, use_bin_type=True),
+                    callback=delivery_report,
+                )
+                producer.poll(0)
+            producer.flush()      
 
     return alarms
 
@@ -422,42 +470,77 @@ def computeMagnitude(asnList, timebin, expId, collection, tau=5, metric="devBoun
 
     return magnitudes
 
+def delivery_report(err, msg):
+    """ Called once for each message produced to indicate delivery result.
+        Triggered by poll() or flush(). """
+    if err is not None:
+        logging.error('Message delivery failed: {}'.format(err))
+    else:
+        # print('Message delivered to {} [{}]'.format(msg.topic(), msg.partition()))
+        pass
+
 
 def detectRttChangesMongo(expId=None):
-
+    global producer
+    global created_topics
+    alarmsCollection = None
     streaming = False
     replay = False
     nbProcesses = 12 
     binMult = 3 # number of bins = binMult*nbProcesses 
     pool = Pool(nbProcesses,initializer=processInit) #, maxtasksperchild=binMult)
+    topics = ["rttExperiments", "rttChanges"]
+     
+    if not set(topics).issubset(set(created_topics)):
+        topic_list = [NewTopic(topic, num_partitions=3, replication_factor=2) for topic in topics]
+        created_topic = admin_client.create_topics(topic_list)
+        for topic, f in created_topic.items():
+            try:
+                f.result()
+                print(f"Topic {topic} created")
+            except Exception as e:
+                print(f"Failed to create topic {topic}: {e}")
+        created_topics.append(topic)
 
-    client = pymongo.MongoClient("mongodb-iijlab")
-    db = client.atlas
-    detectionExperiments = db.rttExperiments
-    alarmsCollection = db.rttChanges
-
-    if expId == "stream":
-        expParam = detectionExperiments.find_one({"stream": True})
-        expId = expParam["_id"]
+    # if expId == "stream":
+    #     expParam = detectionExperiments.find_one({"stream": True})
+    #     expId = expParam["_id"]
 
 
     if expId is None:
         expParam = {
                 "timeWindow": 60*60, # in seconds 
-                "start": datetime(2016, 11, 1, 0, 0, tzinfo=timezone("UTC")), 
-                "end":   datetime(2016, 11, 26, 0, 0, tzinfo=timezone("UTC")),
+                "start": datetime(2016, 11, 1, 0, 0, tzinfo=timezone("UTC")).strftime('%Y-%m-%dT%H:%M:%SZ'), 
+                "end":   datetime(2016, 11, 26, 0, 0, tzinfo=timezone("UTC")).strftime('%Y-%m-%dT%H:%M:%SZ'),
                 "alpha": 0.01, 
                 "confInterval": 0.05,
                 "minASN": 3,
                 "minASNEntropy": 0.5,
                 "minSeen": 3,
-                "experimentDate": datetime.now(),
+                "experimentDate": datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "af": "",
                 "comment": "Study case for Emile (8.8.8.8) Nov. 2016",
                 "prefixes": None
                 }
-
-        expId = detectionExperiments.insert_one(expParam).inserted_id 
+        try:
+            logging.debug('going to produce something')
+            expId = producer.produce(
+                topics[0], 
+                msgpack.packb(expParam, use_bin_type=True),
+                callback=delivery_report,
+            )
+            producer.poll(0)
+            logging.debug('produced something')
+        except BufferError:
+            logging.error('Local queue is full ')
+            producer.flush()
+            expId = producer.produce(
+                topics[0], 
+                msgpack.packb(expParam, use_bin_type=True),
+                callback=delivery_report,
+            )
+            producer.poll(0)
+        producer.flush()           
         sampleMediandiff = {}
 
     else:
@@ -465,19 +548,19 @@ def detectRttChangesMongo(expId=None):
         streaming = True
         now = datetime.now(timezone("UTC"))  
             
-        expParam = detectionExperiments.find_one({"_id": expId})
-        if replay:
-            expParam["start"]= expParam["end"]
-            expParam["end"]= expParam["start"]+timedelta(hours=1)
-        else:
-            expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
-            expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
-        expParam["analysisTimeUTC"] = now
-        resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
-        if resUpdate.modified_count != 1:
-            print("Problem happened when updating the experiment dates!")
-            print(resUpdate)
-            return
+        # expParam = detectionExperiments.find_one({"_id": expId})
+        # if replay:
+        #     expParam["start"]= expParam["end"]
+        #     expParam["end"]= expParam["start"]+timedelta(hours=1)
+        # else:
+        #     expParam["start"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC"))-timedelta(hours=1) 
+        #     expParam["end"]= datetime(now.year, now.month, now.day, now.hour, 0, 0, tzinfo=timezone("UTC")) 
+        # expParam["analysisTimeUTC"] = now
+        # resUpdate = detectionExperiments.replace_one({"_id": expId}, expParam)
+        # if resUpdate.modified_count != 1:
+        #     print("Problem happened when updating the experiment dates!")
+        #     print(resUpdate)
+        #     return
 
         print("Loading previous reference...")
         try:
@@ -496,8 +579,11 @@ def detectRttChangesMongo(expId=None):
     lastAlarms = []
     i2a = ip2asn.ip2asn("../lib/ip2asn/db/rib.20180401.pickle.bz2")
 
-    start = int(calendar.timegm(expParam["start"].timetuple()))
-    end = int(calendar.timegm(expParam["end"].timetuple()))
+    start_time = datetime.strptime(expParam["start"], '%Y-%m-%dT%H:%M:%SZ')
+    end_time = datetime.strptime(expParam["end"], '%Y-%m-%dT%H:%M:%SZ')
+
+    start = int(calendar.timegm(start_time.timetuple()))
+    end = int(calendar.timegm(end_time.timetuple()))
 
     for currDate in range(start,end,int(expParam["timeWindow"])):
         print("Rtt analysis %s" % datetime.utcfromtimestamp(currDate))
@@ -601,7 +687,35 @@ def detectRttChangesMongo(expId=None):
 
 
 if __name__ == "__main__":
+    
     print("Started at %s\n" % datetime.now())
+    
+    # logging
+    FORMAT = '%(asctime)s %(processName)s %(message)s'
+    logging.basicConfig(
+            format=FORMAT, filename='../logs/rtt-Analysis.log' , 
+            level=logging.WARN, datefmt='%Y-%m-%d %H:%M:%S'
+            )
+    logging.info("Started: %s" % sys.argv)
+    
+    producer = Producer({'bootstrap.servers': 'kafka1:9092,kafka2:9092,kafka3:9092',
+            'queue.buffering.max.messages': 10000000,
+            'queue.buffering.max.kbytes': 2097151,
+            'linger.ms': 200,
+            'batch.num.messages': 1000000,
+            'message.max.bytes': 999000,
+            'default.topic.config': {'compression.codec': 'snappy'}})    
+    admin_client = AdminClient({'bootstrap.servers': 'kafka1:9092,kafka2:9092,kafka3:9092'})
+    
+    created_topics = list(admin_client.list_topics(timeout=5).topics.keys())
+    
+
+        
+    consumer = Consumer({
+            'bootstrap.servers': 'kafka1:9092, kafka2:9092, kafka3:9092',
+            'group.id': "rtt-analysis-consumer-group",
+            'auto.offset.reset': 'earliest',
+            })
     try: 
         expId = None
         if len(sys.argv)>1:
@@ -613,10 +727,9 @@ if __name__ == "__main__":
     except Exception as e: 
         tb = traceback.format_exc()
         save_note = "Exception dump: %s : %s.\nCommand: %s\nTraceback: %s" % (type(e).__name__, e, sys.argv, tb)
-        exception_fp = open("dump_%s.err" % datetime.now(), "w")
+        exception_fp = open("../logs/rttAnalysis_dump_%s.err" % datetime.now(), "w")
         exception_fp.write(save_note) 
-        if emailConf.dest:
-            sendMail(save_note)
+        # if emailConf.dest:
+        #     sendMail(save_note)
 
     print("Ended at %s\n" % datetime.now())
-
