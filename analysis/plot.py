@@ -235,7 +235,7 @@ Notes: takes about 6G of RAM for 1 week of data for 1 measurement id
 
     if not expParam["prefixes"] is None:
         expParam["prefixes"] = re.compile(expParam["prefixes"])
-    client = pymongo.MongoClient("mongodb-iijlab")
+    client = pymongo.MongoClient("mongodb://127.0.0.1:27017",username="mongo",password="mongo")
     db = client.atlas
     detectionExperiments = db.rttExperiments
     alarmsCollection = db.rttChanges

@@ -8,17 +8,35 @@ from ripe.atlas.cousteau import AtlasResultsRequest
 import json
 import pymongo
 import gzip
+import msgpack
+import logging
+from confluent_kafka import Producer
+from confluent_kafka.admin import AdminClient, NewTopic
+
+def delivery_report(err, msg):
+    """ Called once for each message produced to indicate delivery result.
+        Triggered by poll() or flush(). """
+    if err is not None:
+        logging.error('Message delivery failed: {}'.format(err))
+    else:
+        # print('Message delivered to {} [{}]'.format(msg.topic(), msg.partition()))
+        pass
 
 
 def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], reverse=False, split=0, timeWindow = timedelta(minutes=24*60) ):
     errors = []
 
-    # storage = "mongo"
-    storage = "mongo"
-    if storage == "mongo":
-        client = pymongo.MongoClient("mongodb-iijlab")
-        db = client.atlas
+    producer = Producer({'bootstrap.servers': 'kafka1:9092,kafka2:9092,kafka3:9092',
+        'queue.buffering.max.messages': 10000000,
+        'queue.buffering.max.kbytes': 2097151,
+        'linger.ms': 200,
+        'batch.num.messages': 1000000,
+        'message.max.bytes': 999000,
+        'default.topic.config': {'compression.codec': 'snappy'}})
+    admin_client = AdminClient({'bootstrap.servers': 'kafka1:9092,kafka2:9092,kafka3:9092'})
 
+    created_topics = list(admin_client.list_topics().topics.keys())
+    
     # Get measurments results
     for af in afs:
         for msmType in msmTypes:
@@ -64,20 +82,49 @@ def downloadData(start, end, msmTypes = ["builtin", "anchor"], afs = [4, 6], rev
                             # if storage == "mongo":
                                 if len(results)==0:
                                     continue
-                                print("Sending data to Mongodb server")
+                                print("Sending data to Kafka Cluster")
                                 if af == 4:
                                     #TODO store data in traceroute4
-                                    collection = "traceroute_%s_%02d_%02d" % (currDate.year, 
+                                    topic = "traceroute_%s_%02d_%02d" % (currDate.year, 
                                                                 currDate.month, currDate.day)
                                 elif af == 6:
-                                    collection = "traceroute6_%s_%02d_%02d" % (currDate.year, 
+                                    topic = "traceroute6_%s_%02d_%02d" % (currDate.year, 
                                                                 currDate.month, currDate.day)
-                                else:
-                                    None
-
-                                col = db[collection]
-                                col.insert_many(results)
-                                col.create_index("timestamp", background=True)       
+                                
+                                if topic not in created_topics:
+                                    topic_list = [NewTopic(topic, num_partitions=3, replication_factor=2)]
+                                    created_topic = admin_client.create_topics(topic_list)
+                                    for topic, f in created_topic.items():
+                                        try:
+                                            f.result()
+                                            print(f"Topic {topic} created")
+                                        except Exception as e:
+                                            print(f"Failed to create topic {topic}: {e}")
+                                    created_topics.append(topic)
+                                    
+                                for traceroute in results:
+                                    try:
+                                        producer.produce(
+                                            topic, 
+                                            msgpack.packb(traceroute, use_bin_type=True),
+                                            traceroute['msm_id'].to_bytes(8, byteorder='big'),
+                                            callback=delivery_report,
+                                            timestamp = traceroute.get('timestamp')*1000
+                                        )
+                                        producer.poll(0)
+                                    except BufferError:
+                                        print("Local queue is full")
+                                        producer.flush()
+                                        producer.produce(
+                                            topic, 
+                                            msgpack.packb(traceroute, use_bin_type=True),
+                                            traceroute['msm_id'].to_bytes(8, byteorder='big'),
+                                            callback=delivery_report,
+                                            timestamp = traceroute.get('timestamp')*1000
+                                        )
+                                        producer.poll(0)
+                                    producer.flush()
+                                
 
                         else:
                             errors.append("%s: msmId=%s" % (currDate, msmId))
@@ -102,6 +149,14 @@ if __name__ == "__main__":
         print("usage: %s year month (builtin, anchor) af" % sys.argv[0])
         sys.exit()
 
+    # logging
+    FORMAT = '%(asctime)s %(processName)s %(message)s'
+    logging.basicConfig(
+            format=FORMAT, filename='../logs/download-data.log' , 
+            level=logging.WARN, datefmt='%Y-%m-%d %H:%M:%S'
+            )
+    logging.info("Started: %s" % sys.argv)
+    
     start = datetime(int(sys.argv[1]), int(sys.argv[2]), 1)
     end= start + relativedelta.relativedelta(months=1)
 

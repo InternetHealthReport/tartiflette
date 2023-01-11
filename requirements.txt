@@ -1,5 +1,6 @@
 certifi==2022.12.7
 charset-normalizer==2.1.1
+confluent-kafka==1.9.2
 contourpy==1.0.6
 cycler==0.11.0
 dnspython==2.2.1
@@ -7,6 +8,7 @@ fonttools==4.38.0
 idna==3.4
 kiwisolver==1.4.4
 matplotlib==3.6.2
+msgpack==1.0.4
 networkx==2.8.8
 numpy==1.24.1
 packaging==22.0

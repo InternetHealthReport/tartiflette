@@ -31,8 +31,8 @@ def mad(arr):
 def connect_mongo(host="mongodb-iijlab", port=27017, db="atlas", username="", password=""):
     """ A util for making a connection to mongo """
     if username and password:
-        mongo_uri = 'mongodb://%s:%s@%s:%s/%s' % (username, password, host, port, db)
-        conn = MongoClient(mongo_uri)
+        # mongo_uri = 'mongodb://%s:%s@%s:%s/%s' % (username, password, host, port, db)
+        conn = MongoClient("mongodb://127.0.0.1:27017",username="mongo",password="mongo")
     else:
         conn = MongoClient(host, port)
 
